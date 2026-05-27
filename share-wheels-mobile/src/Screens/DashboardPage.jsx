@@ -29,19 +29,7 @@ import { DashboardSkeleton, RideListSkeleton } from "../Components/ui/Skeleton";
 import AnimatedLoad from "../Components/ui/AnimatedLoad";
 import AdPlacement from "../Components/ads/AdPlacement";
 import { useAds } from "../context/AdsContext";
-
-const locations = [
-  "Visakhapatnam","Vijayawada","Guntur","Nellore","Kurnool","Tirupati","Rajahmundry",
-  "Kakinada","Anantapur","Kadapa","Eluru","Ongole","Chittoor","Machilipatnam","Adoni",
-  "Tenali","Proddatur","Bhimavaram","Tadepalligudem","Narasaraopet","Vizianagaram",
-  "Srikakulam","Amalapuram","Gudivada","Hindupur","Dharmavaram","Madanapalle","Nandyal",
-  "Puttur","Palakollu","Kavali","Markapur","Rayachoti","Kadiri","Chilakaluripet","Repalle",
-  "Bapatla","Parvathipuram",
-  "Hyderabad","Warangal","Nizamabad","Karimnagar","Khammam","Ramagundam","Mahbubnagar",
-  "Nalgonda","Adilabad","Siddipet","Suryapet","Miryalaguda","Jagtial","Mancherial","Kamareddy",
-  "Kothagudem","Bhongir","Wanaparthy","Vikarabad","Nagarkurnool","Gadwal","Medak","Sangareddy",
-  "Zaheerabad","Shamshabad","Chevella","Tandur","Peddapalli","Huzurabad","Kodad",
-];
+import { useLocationSuggestions } from "../hooks/useLocationSuggestions";
 
 const DashboardPage = () => {
   const navigation = useNavigation();
@@ -77,6 +65,8 @@ const DashboardPage = () => {
     user?._id ||
     user?.id;
   const { refreshAds } = useAds();
+  const { filterLocations: filterLocationSuggestions, reload: reloadLocations } =
+    useLocationSuggestions();
 
   const fetchUpcomingRides = useCallback(async () => {
     try {
@@ -103,7 +93,8 @@ const DashboardPage = () => {
     useCallback(() => {
       fetchUpcomingRides();
       refreshAds();
-    }, [fetchUpcomingRides, refreshUpcomingRides, refreshAds])
+      reloadLocations(true);
+    }, [fetchUpcomingRides, refreshUpcomingRides, refreshAds, reloadLocations])
   );
 
   const handleSearch = async () => {
@@ -208,10 +199,7 @@ const DashboardPage = () => {
     if (field === "FROM") setFromValue(text);
     if (field === "TO") setToValue(text);
     setActiveField(field);
-    const filtered = locations.filter((item) =>
-      item.toLowerCase().includes(text.toLowerCase())
-    );
-    setSuggestions(filtered);
+    setSuggestions(filterLocationSuggestions(text));
   };
 
   const selectLocation = (item) => {

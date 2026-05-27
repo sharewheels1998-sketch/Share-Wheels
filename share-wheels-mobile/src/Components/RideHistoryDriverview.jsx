@@ -11,7 +11,11 @@ import {
 import UserAvatar from "./ui/UserAvatar";
 import madhapurIcon from "../assets/madhapuricon.png";
 import kondapurIcon from "../assets/kondapuricon.png";
-import { getPassengerFare, getDriverTotalEarnings } from "../Utils/fareUtils";
+import {
+  getPassengerFare,
+  getCourierFare,
+  getDriverTotalEarnings,
+} from "../Utils/fareUtils";
 
 const RideHistoryDriverview = ({ ride, loading }) => {
   const passengers = ride?.passengers || [];
@@ -108,7 +112,7 @@ const RideHistoryDriverview = ({ ride, loading }) => {
                     {c?.parcel || c?.what_to_deliver || "Parcel"}
                   </Text>
                 </View>
-                <Text style={styles.passengerPrice}>₹{c?.amount_will || 0}</Text>
+                <Text style={styles.passengerPrice}>₹{getCourierFare(c)}</Text>
               </View>
             ))
           )}

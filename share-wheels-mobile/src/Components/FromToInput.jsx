@@ -17,6 +17,7 @@ import {
 
 import { validateForm, validateLocation } from "../Utils";
 import { INPUT_COLORS } from "../theme/inputTheme";
+import { useLocationSuggestions } from "../hooks/useLocationSuggestions";
 
 const BLUR_HIDE_MS = 280;
 
@@ -25,15 +26,7 @@ const FromToInput = forwardRef(({ fields = [] }, ref) => {
   const [errors, setErrors] = useState({});
   const blurTimers = useRef({});
   const selectingRef = useRef(false);
-
-  const data = [
-    "Hyderabad",
-    "Vijayawada",
-    "Bhimavaram",
-    "Visakhapatnam",
-    "Bangalore",
-    "Chennai",
-  ];
+  const { filterLocations } = useLocationSuggestions();
 
   const validateField = (field) => {
     if (!field.rules) return;
@@ -98,9 +91,7 @@ const FromToInput = forwardRef(({ fields = [] }, ref) => {
       return;
     }
 
-    const filtered = data.filter((item) =>
-      item.toLowerCase().includes(text.toLowerCase())
-    );
+    const filtered = filterLocations(text);
 
     setDropdownState((prev) => ({
       ...prev,
@@ -109,7 +100,7 @@ const FromToInput = forwardRef(({ fields = [] }, ref) => {
         data: filtered,
       },
     }));
-  }, []);
+  }, [filterLocations]);
 
   const handleSelect = useCallback((key, item, onChangeText) => {
     selectingRef.current = true;

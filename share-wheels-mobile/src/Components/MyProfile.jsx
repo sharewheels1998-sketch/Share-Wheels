@@ -19,9 +19,9 @@ import {
   launchCamera,
 } from "react-native-image-picker";
 
-import RatingCard from "../Components/RatingCard";
 import PersonalInformationCard from "../Components/PersonalInformationCard";
 import Supportcard from "../Components/Supportcard";
+import FeedbackCard from "../Components/FeedbackCard";
 import LegalIcon from "../assets/legal.png";
 
 
@@ -34,6 +34,8 @@ import AdPlacement from "./ads/AdPlacement";
 import { useAds } from "../context/AdsContext";
 import { useFocusEffect } from "@react-navigation/native";
 import { LAYOUT, scale } from "../theme/layout";
+import Icon from "react-native-vector-icons/Ionicons";
+import { AUTH_COLORS } from "../theme/authTheme";
 import { uploadAndSetProfileImage } from "../ApiService/imageApiService";
 import { userProfile } from "../ApiService/ridesApiServices";
 import { isRemoteImageUrl } from "../Utils/imageUpload";
@@ -176,63 +178,66 @@ const MyProfile = () => {
   };
 
   return (
-    <ScreenContainer backgroundColor="#F3F4F6" edges={["top"]}>
+    <ScreenContainer backgroundColor="#F1F5F9" edges={["top"]}>
     <KeyboardAwareScreen style={styles.container}>
       <ScrollView
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
         contentContainerStyle={{ paddingBottom: LAYOUT.spacing.xl + 80 }}
       >
-        {/* 🔷 PROFILE CARD */}
         <LinearGradient
-          colors={["#2563EB", "#1D4ED8"]}
-          style={styles.profileCard}
+          colors={["#0F172A", AUTH_COLORS.primaryDark, AUTH_COLORS.primary]}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={styles.profileHero}
         >
+          <Text style={styles.heroLabel}>My profile</Text>
           <View style={styles.topRow}>
             <View style={styles.avatarWrapper}>
-              {/* 👇 CLICK IMAGE */}
-              <TouchableOpacity onPress={openImage}>
+              <TouchableOpacity onPress={openImage} activeOpacity={0.9}>
                 <Image source={imageSource} style={styles.avatar} />
               </TouchableOpacity>
-
-              {/* ✏️ EDIT BUTTON */}
               <TouchableOpacity
                 style={styles.editBtn}
                 onPress={pickImage}
                 disabled={uploadingPhoto}
               >
-                <Text style={styles.editText}>{uploadingPhoto ? "…" : "✏️"}</Text>
+                <Icon name="camera" size={14} color="#FFFFFF" />
               </TouchableOpacity>
             </View>
-
-            <View style={{ flex: 1 }}>
-              <Text style={styles.name}>
-                {personal?.name || "User"}
+            <View style={styles.nameBlock}>
+              <Text style={styles.name}>{personal?.name || "User"}</Text>
+              {personal?.userNo ? (
+                <Text style={styles.userNo}>ID · {personal.userNo}</Text>
+              ) : null}
+              <Text style={styles.email} numberOfLines={1}>
+                {personal?.email || personal?.phoneNumber || "—"}
               </Text>
             </View>
           </View>
         </LinearGradient>
 
-        {/* 👤 PERSONAL INFO */}
-        <PersonalInformationCard
-          personal={personal}
-          vehicle={vehicle}
-        />
+        <Text style={styles.sectionHeading}>Account details</Text>
+        <PersonalInformationCard personal={personal} vehicle={vehicle} />
 
-        {/* 🆘 Support */}
+        <Text style={styles.sectionHeading}>Feedback</Text>
+        <FeedbackCard />
+
+        <Text style={styles.sectionHeading}>Support</Text>
         <Supportcard />
 
-        {/* ⚖️ LEGAL */}
-        <View style={styles.card}>
+        <Text style={styles.sectionHeading}>More</Text>
+        <View style={styles.menuCard}>
           <TouchableOpacity
-            style={styles.row}
+            style={styles.menuRow}
             onPress={() => navigation.navigate("Legal")}
+            activeOpacity={0.85}
           >
-            <View style={styles.iconWrapper}>
-              <Image source={LegalIcon} style={styles.icon} />
+            <View style={[styles.menuIcon, { backgroundColor: "#EEF2FF" }]}>
+              <Image source={LegalIcon} style={styles.menuIconImg} />
             </View>
-            <Text style={styles.title}>Legal</Text>
-            <Text style={styles.arrow}>›</Text>
+            <Text style={styles.menuTitle}>Legal</Text>
+            <Icon name="chevron-forward" size={20} color="#94A3B8" />
           </TouchableOpacity>
         </View>
 
@@ -272,13 +277,24 @@ export default MyProfile;
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#F3F4F6",
+    backgroundColor: "#F1F5F9",
   },
 
-  profileCard: {
-    margin: LAYOUT.spacing.md,
+  profileHero: {
+    marginHorizontal: LAYOUT.spacing.md,
+    marginTop: LAYOUT.spacing.sm,
     borderRadius: LAYOUT.radius.lg,
-    padding: LAYOUT.spacing.screen,
+    padding: LAYOUT.spacing.lg,
+    overflow: "hidden",
+  },
+
+  heroLabel: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: "rgba(255,255,255,0.7)",
+    textTransform: "uppercase",
+    letterSpacing: 1,
+    marginBottom: LAYOUT.spacing.md,
   },
 
   topRow: {
@@ -287,44 +303,65 @@ const styles = StyleSheet.create({
   },
 
   avatarWrapper: {
-    width: LAYOUT.sizes.avatarLg + 8,
-    height: LAYOUT.sizes.avatarLg + 8,
+    width: LAYOUT.sizes.avatarLg + 12,
+    height: LAYOUT.sizes.avatarLg + 12,
     marginRight: LAYOUT.spacing.md,
   },
 
   avatar: {
-    width: LAYOUT.sizes.avatarLg + 8,
-    height: LAYOUT.sizes.avatarLg + 8,
-    borderRadius: (LAYOUT.sizes.avatarLg + 8) / 2,
-    borderColor: "#fff",
-    borderWidth: 2,
-    elevation: 6,
+    width: LAYOUT.sizes.avatarLg + 12,
+    height: LAYOUT.sizes.avatarLg + 12,
+    borderRadius: (LAYOUT.sizes.avatarLg + 12) / 2,
+    borderColor: "rgba(255,255,255,0.9)",
+    borderWidth: 3,
   },
 
   editBtn: {
     position: "absolute",
     bottom: 0,
     right: 0,
-    backgroundColor: "#2563EB",
-    width: 28,
-    height: 28,
-    borderRadius: 14,
+    backgroundColor: "#1D4ED8",
+    width: 32,
+    height: 32,
+    borderRadius: 16,
     justifyContent: "center",
     alignItems: "center",
     borderWidth: 2,
     borderColor: "#fff",
   },
 
-  editText: {
-    color: "#fff",
-    fontSize: 14,
+  nameBlock: {
+    flex: 1,
   },
 
   name: {
-    fontSize: 18,
-    fontWeight: "700",
+    fontSize: 20,
+    fontWeight: "800",
     color: "#fff",
-    marginLeft: 10,
+  },
+
+  userNo: {
+    fontSize: 13,
+    color: "rgba(255,255,255,0.85)",
+    marginTop: 4,
+    fontWeight: "600",
+  },
+
+  email: {
+    fontSize: 13,
+    color: "rgba(255,255,255,0.72)",
+    marginTop: 4,
+  },
+
+  sectionHeading: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: "#64748B",
+    marginLeft: LAYOUT.spacing.md + 4,
+    marginTop: LAYOUT.spacing.lg,
+    marginBottom: 4,
+    textTransform: "uppercase",
+    letterSpacing: 0.6,
   },
 
   modalContainer: {
@@ -340,45 +377,42 @@ const styles = StyleSheet.create({
     borderRadius: 12,
   },
 
-  card: {
+  menuCard: {
     backgroundColor: "#fff",
-    marginHorizontal: 16,
-    marginTop: 12,
-    borderRadius: 14,
-    elevation: 4,
+    marginHorizontal: LAYOUT.spacing.md,
+    marginTop: 4,
+    borderRadius: LAYOUT.radius.lg,
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+    overflow: "hidden",
   },
 
-  row: {
+  menuRow: {
     flexDirection: "row",
     alignItems: "center",
-    padding: 16,
+    padding: LAYOUT.spacing.md,
   },
 
-  iconWrapper: {
-    width: 42,
-    height: 42,
+  menuIcon: {
+    width: 44,
+    height: 44,
     borderRadius: 12,
-    backgroundColor: "#EEF2FF",
     justifyContent: "center",
     alignItems: "center",
     marginRight: 14,
   },
 
-  icon: {
-    width: 20,
-    height: 20,
+  menuIconImg: {
+    width: 22,
+    height: 22,
     tintColor: "#2563EB",
   },
 
-  title: {
+  menuTitle: {
     flex: 1,
     fontSize: 16,
     fontWeight: "600",
-  },
-
-  arrow: {
-    fontSize: 20,
-    color: "#9CA3AF",
+    color: "#0F172A",
   },
 
   logoutBtn: {

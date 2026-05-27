@@ -79,6 +79,8 @@ export const endPoints = {
   verificationParticipantsurl: "/driver-rides",
   verifyParticipanturl: "/driver-rides",
   activeAdsurl: "/ads/active",
+  activeLocationsurl: "/locations/active",
+  feedbackurl: "/feedback",
   notificationsurl: "/notifications",
   registerFcmTokenurl: "/auth/register-fcm-token",
 };

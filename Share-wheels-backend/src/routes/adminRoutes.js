@@ -1,6 +1,8 @@
 const express = require("express");
 const adminController = require("../controllers/adminController");
 const adminAdController = require("../controllers/adminAdController");
+const adminLocationController = require("../controllers/adminLocationController");
+const adminFeedbackController = require("../controllers/adminFeedbackController");
 const adminAuthMiddleware = require("../middlewares/adminAuthMiddleware");
 const adUploadMiddleware = require("../middlewares/adUploadMiddleware");
 
@@ -26,5 +28,15 @@ router.post("/ads", adminAdController.createAd);
 router.post("/ads/upload", adUploadMiddleware, adminAdController.uploadMedia);
 router.patch("/ads/:id", adminAdController.updateAd);
 router.delete("/ads/:id", adminAdController.deleteAd);
+
+router.get("/locations", adminLocationController.listLocations);
+router.post("/locations", adminLocationController.createLocation);
+router.put("/locations/bulk", adminLocationController.bulkUpsertLocations);
+router.delete("/locations/all", adminLocationController.clearAllLocations);
+router.patch("/locations/:id", adminLocationController.updateLocation);
+router.delete("/locations/:id", adminLocationController.deleteLocation);
+
+router.get("/feedback", adminFeedbackController.list);
+router.patch("/feedback/:id", adminFeedbackController.update);
 
 module.exports = router;

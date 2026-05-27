@@ -211,6 +211,9 @@ const ChartBoat = () => {
         <BackButton />
         <View style={styles.headerTextWrap}>
           <Text style={styles.headerTitle}>Support Chat</Text>
+          <Text style={styles.adminBanner}>
+            For feedback to admins, use Send feedback on your Profile screen.
+          </Text>
           <Text style={styles.active} numberOfLines={2}>
             {contextMeta
               ? `Synced · ${contextMeta.upcomingRides ?? 0} upcoming · ${(contextMeta.passengerRequestsOpen ?? 0) + (contextMeta.courierRequestsOpen ?? 0)} requests`
@@ -323,6 +326,12 @@ const styles = StyleSheet.create({
   },
   headerTextWrap: { flex: 1, marginLeft: 4 },
   headerTitle: { fontSize: 18, fontWeight: "700", color: "#0F172A" },
+  adminBanner: {
+    fontSize: 11,
+    color: "#64748B",
+    marginTop: 4,
+    lineHeight: 15,
+  },
   active: { fontSize: 12, color: "#2563EB", marginTop: 4, fontWeight: "500" },
 
   listContent: {

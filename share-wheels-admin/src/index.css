@@ -557,6 +557,19 @@ table.data-table {
   color: #64748b;
 }
 
+.badge-new {
+  background: #fef3c7;
+  color: #b45309;
+}
+.badge-reviewed {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+.badge-resolved {
+  background: #dcfce7;
+  color: #15803d;
+}
+
 /* ─── Alerts ─── */
 .alert {
   padding: 12px 16px;

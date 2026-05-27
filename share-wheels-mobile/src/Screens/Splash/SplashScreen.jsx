@@ -3,13 +3,14 @@ import {
   View,
   Text,
   StyleSheet,
-  TouchableOpacity,
   Image,
-  Dimensions,
   StatusBar,
+  Dimensions,
+  Pressable,
 } from "react-native";
 import LinearGradient from "react-native-linear-gradient";
 import { useNavigation } from "@react-navigation/native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
@@ -25,64 +26,30 @@ import Animated, {
   FadeInUp,
 } from "react-native-reanimated";
 import { AUTH_COLORS } from "../../theme/authTheme";
-import { LAYOUT, scale, verticalScale } from "../../theme/layout";
+import { LAYOUT, scale, verticalScale, moderateScale } from "../../theme/layout";
 import ScreenContainer from "../../Components/ui/ScreenContainer";
 import SplashBackground from "../../Components/splash/SplashBackground";
-import SplashRoad from "../../Components/splash/SplashRoad";
 import icon from "../../assets/icon.png";
-import car from "../../assets/splashcar.png";
 import { INTRO_CTA_DELAY_MS } from "../../theme/splashTiming";
 
 const { width: SCREEN_W } = Dimensions.get("window");
-const AnimatedTouchable = Animated.createAnimatedComponent(TouchableOpacity);
+const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 
-const LoadingDot = ({ delay }) => {
-  const opacity = useSharedValue(0.35);
+const GRADIENT_COLORS = ["#0F172A", "#1E3A8A", "#2563EB", "#38BDF8"];
+const GRADIENT_LOCATIONS = [0, 0.32, 0.68, 1];
 
-  useEffect(() => {
-    opacity.value = withDelay(
-      delay,
-      withRepeat(
-        withSequence(
-          withTiming(1, { duration: 380, easing: Easing.out(Easing.quad) }),
-          withTiming(0.35, { duration: 380, easing: Easing.in(Easing.quad) })
-        ),
-        -1,
-        false
-      )
-    );
-  }, [delay, opacity]);
+const FEATURES = ["Carpool", "Courier", "Community"];
 
-  const style = useAnimatedStyle(() => ({
-    opacity: opacity.value,
-    transform: [{ scale: interpolate(opacity.value, [0.35, 1], [0.85, 1.15]) }],
-  }));
-
-  return <Animated.View style={[styles.dot, style]} />;
-};
-
-const LoadingDots = () => (
-  <View style={styles.dotsRow}>
-    <LoadingDot delay={0} />
-    <LoadingDot delay={140} />
-    <LoadingDot delay={280} />
-  </View>
-);
-
-/**
- * mode: "intro" — onboarding splash with CTA
- * mode: "bootstrap" — shown while checking stored auth token
- */
 const SplashScreen = ({ mode = "intro" }) => {
   const navigation = useNavigation();
+  const insets = useSafeAreaInsets();
   const isBootstrap = mode === "bootstrap";
   const [ctaReady, setCtaReady] = useState(isBootstrap);
 
-  const logoScale = useSharedValue(0.6);
-  const logoRotate = useSharedValue(-8);
-  const carX = useSharedValue(-SCREEN_W * 0.85);
-  const carBob = useSharedValue(0);
+  const logoEnter = useSharedValue(0);
+  const shimmer = useSharedValue(0);
   const btnScale = useSharedValue(1);
+  const progressWidth = useSharedValue(0.15);
 
   useEffect(() => {
     if (!isBootstrap) {
@@ -93,43 +60,46 @@ const SplashScreen = ({ mode = "intro" }) => {
   }, [isBootstrap]);
 
   useEffect(() => {
-    logoScale.value = withSpring(1, { damping: 14, stiffness: 120 });
-    logoRotate.value = withSpring(0, { damping: 12, stiffness: 90 });
-
-    carX.value = withDelay(
-      350,
-      withSpring(0, { damping: 16, stiffness: 85, mass: 0.9 })
-    );
-
-    carBob.value = withDelay(
-      1100,
+    logoEnter.value = withSpring(1, { damping: 14, stiffness: 90 });
+    shimmer.value = withDelay(
+      600,
       withRepeat(
         withSequence(
-          withTiming(-6, { duration: 1200, easing: Easing.inOut(Easing.sin) }),
-          withTiming(0, { duration: 1200, easing: Easing.inOut(Easing.sin) })
+          withTiming(1, { duration: 2200, easing: Easing.inOut(Easing.ease) }),
+          withTiming(0, { duration: 2200, easing: Easing.inOut(Easing.ease) })
         ),
         -1,
-        true
+        false
       )
     );
-  }, [logoScale, logoRotate, carX, carBob]);
+    progressWidth.value = withRepeat(
+      withSequence(
+        withTiming(0.92, { duration: 2200, easing: Easing.inOut(Easing.cubic) }),
+        withTiming(0.15, { duration: 0 })
+      ),
+      -1,
+      false
+    );
+  }, [logoEnter, progressWidth, shimmer]);
 
-  const logoStyle = useAnimatedStyle(() => ({
+  const logoClusterStyle = useAnimatedStyle(() => ({
+    opacity: logoEnter.value,
     transform: [
-      { scale: logoScale.value },
-      { rotate: `${logoRotate.value}deg` },
+      { scale: interpolate(logoEnter.value, [0, 1], [0.88, 1]) },
+      { translateY: interpolate(logoEnter.value, [0, 1], [24, 0]) },
     ],
   }));
 
-  const carStyle = useAnimatedStyle(() => ({
-    transform: [
-      { translateX: carX.value },
-      { translateY: carBob.value },
-    ],
+  const shimmerStyle = useAnimatedStyle(() => ({
+    opacity: interpolate(shimmer.value, [0, 1], [0.35, 0.85]),
   }));
 
   const btnAnimStyle = useAnimatedStyle(() => ({
     transform: [{ scale: btnScale.value }],
+  }));
+
+  const progressStyle = useAnimatedStyle(() => ({
+    transform: [{ scaleX: progressWidth.value }],
   }));
 
   const goToSignIn = () => {
@@ -139,7 +109,7 @@ const SplashScreen = ({ mode = "intro" }) => {
   };
 
   const onPressIn = () => {
-    btnScale.value = withTiming(0.96, { duration: 80 });
+    btnScale.value = withTiming(0.97, { duration: 80 });
   };
   const onPressOut = () => {
     btnScale.value = withSpring(1, { damping: 12, stiffness: 200 });
@@ -147,79 +117,111 @@ const SplashScreen = ({ mode = "intro" }) => {
 
   return (
     <ScreenContainer
-      edges={["top", "bottom"]}
+      edges={[]}
       backgroundColor="transparent"
       style={styles.screen}
     >
-      <StatusBar barStyle="light-content" backgroundColor={AUTH_COLORS.primaryDark} />
+      <StatusBar
+        barStyle="light-content"
+        translucent
+        backgroundColor="transparent"
+      />
       <LinearGradient
-        colors={["#0F172A", AUTH_COLORS.primaryDark, AUTH_COLORS.primary, "#38BDF8"]}
-        locations={[0, 0.35, 0.72, 1]}
-        start={{ x: 0.1, y: 0 }}
-        end={{ x: 0.9, y: 1 }}
+        colors={GRADIENT_COLORS}
+        locations={GRADIENT_LOCATIONS}
+        start={{ x: 0.15, y: 0 }}
+        end={{ x: 0.85, y: 1 }}
         style={styles.gradient}
       >
         <SplashBackground />
 
-        <View style={styles.content}>
-          <Animated.View entering={FadeIn.duration(500)} style={logoStyle}>
-            <View style={styles.logoWrap}>
-              <View style={styles.logoGlow} />
-              <Image source={icon} style={styles.logo} resizeMode="contain" />
-            </View>
-          </Animated.View>
+        <View
+          style={[
+            styles.safeContent,
+            { paddingTop: insets.top + scale(12), paddingBottom: insets.bottom + scale(16) },
+          ]}
+        >
+          {/* Brand hero */}
+          <View style={styles.hero}>
+            <Animated.View style={[styles.logoCluster, logoClusterStyle]}>
+              <Animated.View style={[styles.logoHalo, shimmerStyle]} />
+              <LinearGradient
+                colors={["rgba(255,255,255,0.35)", "rgba(255,255,255,0.12)"]}
+                style={styles.logoCard}
+              >
+                <Image source={icon} style={styles.logoImage} resizeMode="contain" />
+              </LinearGradient>
+            </Animated.View>
 
-          <Animated.Text
-            entering={FadeInDown.delay(180).duration(600).springify()}
-            style={styles.appName}
+            <Animated.Text
+              entering={FadeInDown.delay(280).duration(500)}
+              style={styles.brandName}
+            >
+              Share Wheels
+            </Animated.Text>
+
+            <Animated.Text
+              entering={FadeInDown.delay(420).duration(500)}
+              style={styles.tagline}
+            >
+              Share rides. Save money. Travel smarter.
+            </Animated.Text>
+
+            <Animated.View
+              entering={FadeIn.delay(520).duration(400)}
+              style={styles.featureRow}
+            >
+              {FEATURES.map((label) => (
+                <View key={label} style={styles.featurePill}>
+                  <Text style={styles.featureText}>{label}</Text>
+                </View>
+              ))}
+            </Animated.View>
+          </View>
+
+          {/* Footer panel */}
+          <Animated.View
+            entering={FadeInUp.delay(isBootstrap ? 300 : 900).duration(450)}
+            style={styles.footerPanel}
           >
-            Share Wheels
-          </Animated.Text>
+            {isBootstrap ? (
+              <View style={styles.bootBlock}>
+                <Text style={styles.bootTitle}>Getting things ready</Text>
+                <View style={styles.progressTrack}>
+                  <Animated.View style={[styles.progressFill, progressStyle]} />
+                </View>
+                <Text style={styles.bootSub}>Loading your account…</Text>
+              </View>
+            ) : ctaReady ? (
+              <AnimatedPressable
+                onPress={goToSignIn}
+                onPressIn={onPressIn}
+                onPressOut={onPressOut}
+                style={[styles.ctaButton, btnAnimStyle]}
+              >
+                <LinearGradient
+                  colors={["#FFFFFF", "#F8FAFC"]}
+                  style={styles.ctaInner}
+                >
+                  <Text style={styles.ctaText}>Get Started</Text>
+                  <View style={styles.ctaArrow}>
+                    <Text style={styles.ctaArrowText}>→</Text>
+                  </View>
+                </LinearGradient>
+              </AnimatedPressable>
+            ) : (
+              <View style={styles.bootBlock}>
+                <Text style={styles.bootTitle}>Welcome</Text>
+                <View style={styles.progressTrack}>
+                  <Animated.View style={[styles.progressFill, progressStyle]} />
+                </View>
+                <Text style={styles.bootSub}>Preparing your experience…</Text>
+              </View>
+            )}
 
-          <Animated.Text
-            entering={FadeInDown.delay(320).duration(600)}
-            style={styles.tagline}
-          >
-            Share rides. Save money.{"\n"}Travel smarter together.
-          </Animated.Text>
-
-          <Animated.View style={[styles.carWrap, carStyle]}>
-            <Image source={car} style={styles.car} resizeMode="contain" />
-          </Animated.View>
-
-          <Animated.View entering={FadeIn.delay(700).duration(500)} style={styles.roadWrap}>
-            <SplashRoad />
+            <Text style={styles.versionNote}>Ride sharing made simple</Text>
           </Animated.View>
         </View>
-
-        <Animated.View
-          entering={FadeInUp.delay(isBootstrap ? 400 : INTRO_CTA_DELAY_MS).duration(500)}
-          style={styles.footer}
-        >
-          {isBootstrap ? (
-            <View style={styles.bootBlock}>
-              <LoadingDots />
-              <Text style={styles.bootText}>Loading your account…</Text>
-            </View>
-          ) : ctaReady ? (
-            <AnimatedTouchable
-              style={[styles.button, btnAnimStyle]}
-              activeOpacity={1}
-              onPressIn={onPressIn}
-              onPressOut={onPressOut}
-              onPress={goToSignIn}
-            >
-              <Text style={styles.buttonText}>Get Started</Text>
-              <Text style={styles.buttonArrow}>→</Text>
-            </AnimatedTouchable>
-          ) : (
-            <View style={styles.bootBlock}>
-              <LoadingDots />
-              <Text style={styles.bootText}>Welcome to Share Wheels…</Text>
-            </View>
-          )}
-          <Text style={styles.footerNote}>Carpool · Courier · Community</Text>
-        </Animated.View>
       </LinearGradient>
     </ScreenContainer>
   );
@@ -229,121 +231,165 @@ export default SplashScreen;
 
 const styles = StyleSheet.create({
   screen: { flex: 1 },
-  gradient: { flex: 1, overflow: "hidden" },
-  content: {
+  gradient: { flex: 1 },
+  safeContent: {
+    flex: 1,
+    justifyContent: "space-between",
+  },
+  hero: {
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: LAYOUT.spacing.xl,
-    paddingTop: LAYOUT.spacing.lg,
+    paddingBottom: verticalScale(8),
   },
-  logoWrap: {
-    width: scale(88),
-    height: scale(88),
-    borderRadius: scale(22),
-    backgroundColor: "rgba(255,255,255,0.18)",
+  logoCluster: {
     alignItems: "center",
     justifyContent: "center",
-    marginBottom: scale(20),
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.35)",
+    marginBottom: scale(28),
   },
-  logoGlow: {
+  logoHalo: {
     position: "absolute",
-    width: scale(100),
-    height: scale(100),
-    borderRadius: scale(50),
-    backgroundColor: "rgba(255,255,255,0.12)",
+    width: scale(200),
+    height: scale(200),
+    borderRadius: scale(100),
+    backgroundColor: "rgba(255,255,255,0.2)",
   },
-  logo: { width: scale(52), height: scale(52) },
-  appName: {
-    fontSize: LAYOUT.font.hero + 2,
+  logoCard: {
+    width: scale(132),
+    height: scale(132),
+    borderRadius: scale(36),
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1.5,
+    borderColor: "rgba(255,255,255,0.55)",
+    shadowColor: "#0F172A",
+    shadowOffset: { width: 0, height: 16 },
+    shadowOpacity: 0.35,
+    shadowRadius: 24,
+    elevation: 16,
+  },
+  logoImage: {
+    width: scale(80),
+    height: scale(80),
+  },
+  brandName: {
+    fontSize: Math.min(moderateScale(32), 36),
     fontWeight: "800",
-    color: AUTH_COLORS.white,
-    letterSpacing: 0.8,
-    marginBottom: scale(10),
+    color: "#FFFFFF",
+    letterSpacing: 0.5,
     textAlign: "center",
+    marginBottom: scale(10),
   },
   tagline: {
-    fontSize: LAYOUT.font.body,
-    color: "rgba(255,255,255,0.92)",
+    fontSize: LAYOUT.font.body + 1,
+    color: "rgba(255,255,255,0.88)",
     textAlign: "center",
     lineHeight: scale(22),
-    maxWidth: 300,
-    marginBottom: scale(8),
+    maxWidth: SCREEN_W * 0.82,
+    marginBottom: scale(20),
   },
-  carWrap: {
-    marginTop: scale(12),
-    alignItems: "center",
+  featureRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    justifyContent: "center",
+    gap: scale(8),
   },
-  car: {
-    width: scale(260),
-    height: verticalScale(150),
+  featurePill: {
+    paddingHorizontal: scale(14),
+    paddingVertical: scale(6),
+    borderRadius: scale(20),
+    backgroundColor: "rgba(255,255,255,0.14)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.28)",
   },
-  roadWrap: {
-    width: "100%",
-    alignItems: "center",
-    marginTop: scale(4),
+  featureText: {
+    fontSize: LAYOUT.font.small,
+    fontWeight: "600",
+    color: "rgba(255,255,255,0.95)",
+    letterSpacing: 0.3,
   },
-  footer: {
-    paddingHorizontal: LAYOUT.spacing.xl,
-    paddingBottom: LAYOUT.spacing.xl,
-    alignItems: "center",
+  footerPanel: {
+    marginHorizontal: LAYOUT.spacing.lg,
+    paddingHorizontal: LAYOUT.spacing.lg,
+    paddingTop: LAYOUT.spacing.lg,
+    paddingBottom: LAYOUT.spacing.md,
+    borderRadius: LAYOUT.radius.xl,
+    backgroundColor: "rgba(255,255,255,0.1)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.2)",
   },
-  button: {
-    backgroundColor: AUTH_COLORS.white,
-    paddingVertical: scale(16),
-    paddingHorizontal: scale(32),
+  ctaButton: {
     borderRadius: scale(16),
-    width: "100%",
-    maxWidth: 340,
+    overflow: "hidden",
+    shadowColor: "#0F172A",
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.2,
+    shadowRadius: 12,
+    elevation: 6,
+  },
+  ctaInner: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    gap: 8,
-    shadowColor: "#0F172A",
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.25,
-    shadowRadius: 16,
-    elevation: 8,
+    paddingVertical: scale(17),
+    paddingHorizontal: scale(24),
+    gap: scale(10),
   },
-  buttonText: {
+  ctaText: {
     color: AUTH_COLORS.primary,
-    fontSize: LAYOUT.font.body + 1,
-    fontWeight: "700",
+    fontSize: LAYOUT.font.section,
+    fontWeight: "800",
   },
-  buttonArrow: {
-    color: AUTH_COLORS.primary,
-    fontSize: LAYOUT.font.title,
+  ctaArrow: {
+    width: scale(28),
+    height: scale(28),
+    borderRadius: scale(14),
+    backgroundColor: AUTH_COLORS.primary,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  ctaArrowText: {
+    color: "#FFFFFF",
+    fontSize: scale(16),
     fontWeight: "700",
-    marginTop: -2,
+    marginTop: -1,
   },
   bootBlock: {
-    alignItems: "center",
-    minHeight: scale(56),
+    alignItems: "stretch",
+    width: "100%",
   },
-  bootText: {
-    color: "rgba(255,255,255,0.9)",
+  bootTitle: {
+    color: "#FFFFFF",
+    fontSize: LAYOUT.font.section,
+    fontWeight: "700",
+    textAlign: "center",
+    marginBottom: scale(12),
+  },
+  bootSub: {
+    color: "rgba(255,255,255,0.75)",
+    fontSize: LAYOUT.font.small,
+    textAlign: "center",
+    marginTop: scale(10),
+  },
+  progressTrack: {
+    height: scale(4),
+    borderRadius: scale(2),
+    backgroundColor: "rgba(255,255,255,0.2)",
+    overflow: "hidden",
+  },
+  progressFill: {
+    width: "100%",
+    height: "100%",
+    borderRadius: scale(2),
+    backgroundColor: "#FFFFFF",
+    transformOrigin: "left",
+  },
+  versionNote: {
     marginTop: scale(14),
-    fontSize: scale(15),
-    fontWeight: "500",
-  },
-  dotsRow: {
-    flexDirection: "row",
-    gap: 10,
-    alignItems: "center",
-  },
-  dot: {
-    width: 10,
-    height: 10,
-    borderRadius: 5,
-    backgroundColor: AUTH_COLORS.white,
-  },
-  footerNote: {
-    marginTop: scale(14),
-    fontSize: scale(12),
-    color: "rgba(255,255,255,0.55)",
-    letterSpacing: 1.2,
-    textTransform: "uppercase",
+    fontSize: LAYOUT.font.tiny,
+    color: "rgba(255,255,255,0.5)",
+    textAlign: "center",
+    letterSpacing: 0.8,
   },
 });

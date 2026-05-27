@@ -8,6 +8,8 @@ const nav = [
   { to: "/couriers", label: "Couriers", icon: "C" },
   { to: "/live-tracking", label: "Live Tracking", icon: "L" },
   { to: "/ads", label: "Ads", icon: "A" },
+  { to: "/locations", label: "Locations", icon: "G" },
+  { to: "/feedback", label: "Feedback", icon: "F" },
 ];
 
 export default function Layout() {

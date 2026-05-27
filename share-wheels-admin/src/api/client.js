@@ -75,6 +75,27 @@ export const updateAd = (id, body) =>
   api(`/admin/ads/${id}`, { method: "PATCH", body: JSON.stringify(body) });
 export const deleteAd = (id) => api(`/admin/ads/${id}`, { method: "DELETE" });
 
+export const getLocations = () => api("/admin/locations");
+export const createLocation = (body) =>
+  api("/admin/locations", { method: "POST", body: JSON.stringify(body) });
+export const updateLocation = (id, body) =>
+  api(`/admin/locations/${id}`, { method: "PATCH", body: JSON.stringify(body) });
+export const deleteLocation = (id) =>
+  api(`/admin/locations/${id}`, { method: "DELETE" });
+export const bulkUpsertLocations = (names) =>
+  api("/admin/locations/bulk", {
+    method: "PUT",
+    body: JSON.stringify({ names }),
+  });
+export const clearAllLocations = () => api("/admin/locations/all", { method: "DELETE" });
+
+export const getFeedbacks = (params = {}) => {
+  const q = new URLSearchParams(params).toString();
+  return api(`/admin/feedback?${q}`);
+};
+export const updateFeedback = (id, body) =>
+  api(`/admin/feedback/${id}`, { method: "PATCH", body: JSON.stringify(body) });
+
 export const uploadAdMedia = async (file, mediaType = "image") => {
   const token = getToken();
   const formData = new FormData();

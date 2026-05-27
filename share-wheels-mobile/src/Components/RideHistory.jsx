@@ -25,7 +25,7 @@ import AnimatedLoad from "./ui/AnimatedLoad";
 import AnimatedTabs from "./ui/AnimatedTabs";
 import FadePanel from "./ui/FadePanel";
 import { useFocusEffect } from "@react-navigation/native";
-import { getRideDisplayFare } from "../Utils/fareUtils";
+import { getRideDisplayFare, getDriverTotalEarnings } from "../Utils/fareUtils";
 import UserAvatar from "./ui/UserAvatar";
 import ScreenContainer from "./ui/ScreenContainer";
 import AdPlacement from "./ads/AdPlacement";
@@ -210,7 +210,12 @@ const RideHistory = () => {
                 <Text style={[styles.role, { backgroundColor: colors[0] }]}>
                   {item.role}
                 </Text>
-                <Text style={styles.price}>₹{getRideDisplayFare(item)}</Text>
+                <Text style={styles.price}>
+                  ₹
+                  {item.role === "Driver"
+                    ? getDriverTotalEarnings(item)
+                    : getRideDisplayFare(item)}
+                </Text>
               </View>
                 </View>
               </View>

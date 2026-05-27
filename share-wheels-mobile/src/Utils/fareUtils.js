@@ -34,11 +34,17 @@ export const getRideDisplayFare = (ride) => {
 
 export const formatRupee = (amount) => `₹${Number(amount ?? 0)}`;
 
-/** Driver earnings from confirmed passengers on a completed ride */
+/** Driver earnings from confirmed passengers and couriers on a completed ride */
 export const getDriverTotalEarnings = (ride) => {
   const passengers = ride?.passengers || [];
-  if (!passengers.length) {
-    return Number(ride?.ride_amount ?? 0);
-  }
-  return passengers.reduce((sum, p) => sum + getPassengerFare(p), 0);
+  const couriers = ride?.all_deliveries || [];
+  const passengerTotal = passengers.reduce(
+    (sum, p) => sum + getPassengerFare(p),
+    0
+  );
+  const courierTotal = couriers.reduce(
+    (sum, c) => sum + getCourierFare(c),
+    0
+  );
+  return passengerTotal + courierTotal;
 };

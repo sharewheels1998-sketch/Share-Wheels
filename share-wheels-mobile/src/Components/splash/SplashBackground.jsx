@@ -9,13 +9,14 @@ import Animated, {
   Easing,
   interpolate,
 } from "react-native-reanimated";
+import LinearGradient from "react-native-linear-gradient";
 
 const { width: W, height: H } = Dimensions.get("window");
 
 const ORBS = [
-  { size: W * 0.55, top: -H * 0.08, left: -W * 0.2, delay: 0 },
-  { size: W * 0.45, top: H * 0.35, right: -W * 0.15, delay: 400 },
-  { size: W * 0.35, bottom: H * 0.12, left: W * 0.05, delay: 800 },
+  { size: W * 0.7, top: -H * 0.12, left: -W * 0.25, opacity: [0.08, 0.18] },
+  { size: W * 0.5, top: H * 0.42, right: -W * 0.2, opacity: [0.06, 0.14] },
+  { size: W * 0.38, bottom: H * 0.08, left: W * 0.1, opacity: [0.05, 0.12] },
 ];
 
 const FloatingOrb = ({ orb, index }) => {
@@ -24,8 +25,14 @@ const FloatingOrb = ({ orb, index }) => {
   useEffect(() => {
     progress.value = withRepeat(
       withSequence(
-        withTiming(1, { duration: 2800 + index * 400, easing: Easing.inOut(Easing.sin) }),
-        withTiming(0, { duration: 2800 + index * 400, easing: Easing.inOut(Easing.sin) })
+        withTiming(1, {
+          duration: 3200 + index * 500,
+          easing: Easing.inOut(Easing.sin),
+        }),
+        withTiming(0, {
+          duration: 3200 + index * 500,
+          easing: Easing.inOut(Easing.sin),
+        })
       ),
       -1,
       false
@@ -33,10 +40,14 @@ const FloatingOrb = ({ orb, index }) => {
   }, [index, progress]);
 
   const style = useAnimatedStyle(() => ({
-    opacity: interpolate(progress.value, [0, 1], [0.12, 0.28]),
+    opacity: interpolate(
+      progress.value,
+      [0, 1],
+      orb.opacity
+    ),
     transform: [
-      { translateY: interpolate(progress.value, [0, 1], [0, -18 - index * 6]) },
-      { scale: interpolate(progress.value, [0, 1], [1, 1.08]) },
+      { translateY: interpolate(progress.value, [0, 1], [0, -12 - index * 4]) },
+      { scale: interpolate(progress.value, [0, 1], [1, 1.05]) },
     ],
   }));
 
@@ -56,10 +67,15 @@ const FloatingOrb = ({ orb, index }) => {
 
 const SplashBackground = () => (
   <>
+    <LinearGradient
+      colors={["rgba(255,255,255,0.12)", "transparent"]}
+      style={styles.topGlow}
+      pointerEvents="none"
+    />
     {ORBS.map((orb, i) => (
       <FloatingOrb key={i} orb={orb} index={i} />
     ))}
-    <Animated.View style={styles.shine} pointerEvents="none" />
+    <Animated.View style={styles.bottomFade} pointerEvents="none" />
   </>
 );
 
@@ -69,14 +85,19 @@ const styles = StyleSheet.create({
   orb: {
     backgroundColor: "#FFFFFF",
   },
-  shine: {
+  topGlow: {
     position: "absolute",
     top: 0,
     left: 0,
     right: 0,
-    height: H * 0.45,
-    backgroundColor: "rgba(255,255,255,0.06)",
-    borderBottomLeftRadius: W,
-    borderBottomRightRadius: W,
+    height: H * 0.35,
+  },
+  bottomFade: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    bottom: 0,
+    height: H * 0.4,
+    backgroundColor: "rgba(15, 23, 42, 0.15)",
   },
 });
