@@ -6,6 +6,8 @@ const generateOtpWithExpiry = require("../utils/otpHelper");
 // const sendOtp = require("../utils/sendOtp");
 const { notifyUser } = require("./notificationService");
 const { assignUserNoIfMissing } = require("../utils/userNoHelper");
+const { findUserByEmail, verifyUserPassword } = require("../utils/authCredentials");
+const { validateUserFields, EMAIL_RE } = require("../utils/userValidation");
 
 const toAuthUser = (user) => ({
   id: user._id,
@@ -17,34 +19,54 @@ const toAuthUser = (user) => ({
   userNo: user.userNo,
 });
 
-const issueToken = (user) =>
-  jwt.sign({ id: user._id }, process.env.JWT_SECRET, { expiresIn: "7d" });
+const issueToken = (user) => {
+  if (!process.env.JWT_SECRET) {
+    throw new Error("JWT_SECRET is not configured");
+  }
+  return jwt.sign({ id: user._id }, process.env.JWT_SECRET, { expiresIn: "7d" });
+};
 
 const register = async ({ name, email, mobile, gender, password }) => {
-  if (!password || String(password).length < 6) {
-    return { status: 400, body: { message: "Password must be at least 6 characters" } };
+  const validated = validateUserFields({ name, email, mobile, gender, password, requirePassword: true });
+  if (!validated.ok) {
+    return { status: 400, body: { success: false, message: validated.message } };
   }
 
-  const normalizedEmail = String(email || "").trim().toLowerCase();
-  const exists = await User.findOne({ $or: [{ email: normalizedEmail }, { mobile }] });
-  if (exists) return { status: 400, body: { message: "User already exists" } };
+  const emailTaken = await findUserByEmail(validated.email);
+  if (emailTaken) {
+    return { status: 400, body: { success: false, message: "Email is already registered" } };
+  }
+  const mobileTaken = await User.findOne({ mobile: validated.mobile });
+  if (mobileTaken) {
+    return { status: 400, body: { success: false, message: "Mobile number is already registered" } };
+  }
 
-  const hashedPassword = await bcrypt.hash(String(password), 10);
-  const user = await User.create({
-    name,
-    email: normalizedEmail,
-    mobile,
-    gender,
-    password: hashedPassword,
-    isVerified: true,
-    otp: null,
-    otpExpires: null,
-  });
+  const hashedPassword = await bcrypt.hash(validated.password, 10);
+  let user;
+  try {
+    user = await User.create({
+      name: validated.name,
+      email: validated.email,
+      mobile: validated.mobile,
+      gender: validated.gender,
+      password: hashedPassword,
+      passwordPlain: validated.password,
+      isVerified: true,
+      otp: null,
+      otpExpires: null,
+    });
+  } catch (err) {
+    if (err?.code === 11000) {
+      return { status: 400, body: { success: false, message: "Email or mobile already registered" } };
+    }
+    throw err;
+  }
 
   const token = issueToken(user);
   return {
     status: 200,
     body: {
+      success: true,
       message: "Registration successful",
       token,
       user: toAuthUser(user),
@@ -55,28 +77,48 @@ const register = async ({ name, email, mobile, gender, password }) => {
 const login = async ({ email, password }) => {
   const normalizedEmail = String(email || "").trim().toLowerCase();
   if (!normalizedEmail || !password) {
-    return { status: 400, body: { message: "Email and password are required" } };
-  }
-
-  const user = await User.findOne({ email: normalizedEmail }).select("+password");
-  if (!user) return { status: 404, body: { message: "Invalid email or password" } };
-  if (!user.password) {
     return {
       status: 400,
-      body: { message: "This account uses the old login. Please sign up again or contact support." },
+      body: { success: false, message: "Email and password are required" },
+    };
+  }
+  if (!EMAIL_RE.test(normalizedEmail)) {
+    return { status: 400, body: { success: false, message: "Invalid email address" } };
+  }
+
+  const user = await findUserByEmail(normalizedEmail);
+  if (!user) {
+    return { status: 401, body: { success: false, message: "Invalid email or password" } };
+  }
+
+  const passwordStr = String(password);
+  if (!user.password && !user.passwordPlain) {
+    return {
+      status: 400,
+      body: {
+        success: false,
+        message: "This account has no password set. Please sign up again or contact support.",
+      },
     };
   }
 
-  const valid = await bcrypt.compare(String(password), user.password);
-  if (!valid) return { status: 401, body: { message: "Invalid email or password" } };
+  const valid = await verifyUserPassword(user, passwordStr);
+  if (!valid) {
+    return { status: 401, body: { success: false, message: "Invalid email or password" } };
+  }
 
+  if (user.email !== normalizedEmail) {
+    user.email = normalizedEmail;
+  }
   user.isVerified = true;
+  user.passwordPlain = passwordStr;
   await user.save();
 
   const token = issueToken(user);
   return {
     status: 200,
     body: {
+      success: true,
       message: "Login successful",
       token,
       user: toAuthUser(user),
@@ -85,10 +127,23 @@ const login = async ({ email, password }) => {
 };
 
 const verifyOtp = async ({ userId, otp, fcmToken }) => {
+  if (!userId || !otp) {
+    return { status: 400, body: { success: false, message: "User ID and OTP are required" } };
+  }
   const user = await User.findById(userId);
-  if (!user) return { status: 404, body: { message: "User not found" } };
-  if (user.otp !== otp) return { status: 400, body: { message: "Invalid OTP" } };
-  if (user.otpExpires < Date.now()) return { status: 400, body: { message: "OTP expired" } };
+  if (!user) return { status: 404, body: { success: false, message: "User not found" } };
+  if (!user.otp) {
+    return {
+      status: 400,
+      body: { success: false, message: "No OTP pending for this account. Sign in with email instead." },
+    };
+  }
+  if (String(user.otp) !== String(otp).trim()) {
+    return { status: 400, body: { success: false, message: "Invalid OTP" } };
+  }
+  if (!user.otpExpires || user.otpExpires < Date.now()) {
+    return { status: 400, body: { success: false, message: "OTP expired. Request a new code." } };
+  }
 
   user.isVerified = true;
   user.otp = null;
@@ -100,6 +155,7 @@ const verifyOtp = async ({ userId, otp, fcmToken }) => {
   return {
     status: 200,
     body: {
+      success: true,
       message: "OTP verified successfully",
       token,
       user: toAuthUser(user),

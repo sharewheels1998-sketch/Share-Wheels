@@ -1,5 +1,6 @@
 const adminService = require("../services/adminService");
 const adminDashboardService = require("../services/adminDashboardService");
+const adminUserService = require("../services/adminUserService");
 
 const handle = async (res, fn) => {
   try {
@@ -15,6 +16,11 @@ module.exports = {
   login: async (req, res) => handle(res, () => adminService.login(req.body)),
   dashboardStats: async (req, res) => handle(res, () => adminDashboardService.getDashboardStats()),
   listUsers: async (req, res) => handle(res, () => adminDashboardService.listUsers(req.query)),
+  createUser: async (req, res) => handle(res, () => adminUserService.createUser(req.body)),
+  updateUser: async (req, res) => handle(res, () => adminUserService.updateUser(req.params.id, req.body)),
+  deleteUser: async (req, res) => handle(res, () => adminUserService.deleteUser(req.params.id)),
+  backfillUserPasswords: async (req, res) =>
+    handle(res, () => adminDashboardService.backfillUserPasswords(req.body)),
   listRides: async (req, res) => handle(res, () => adminDashboardService.listRides(req.query)),
   listPassengerRides: async (req, res) =>
     handle(res, () => adminDashboardService.listPassengerRides(req.query)),

@@ -3,6 +3,7 @@ const Ride = require("../models/rideModel");
 const User = require("../models/userModel");
 const { assignUserNoIfMissing } = require("../utils/userNoHelper");
 const { generateBoardingOtp, boardingOtpExpiry } = require("../utils/boardingOtpHelper");
+const { notifyUser } = require("./notificationService");
 
 const USER_POPULATE = "name email mobile profile_img userNo";
 
@@ -162,6 +163,17 @@ const verifyParticipant = async (user, { rideId, userNo, otp }) => {
   ride.markModified("all_deliveries");
   await ride.save();
 
+  const participantUserId = entry.userId?._id || entry.userId;
+  if (participantUserId) {
+    const route = `${ride.from} → ${ride.to}`;
+    await notifyUser(participantUserId, {
+      title: "Boarding verified",
+      body: `Your boarding OTP was verified for the ride (${route}).`,
+      type: "boarding_otp_verified",
+      data: { rideId: ride._id.toString(), role: type },
+    });
+  }
+
   const refreshed = await listVerificationParticipants(user, rideId);
 
   return {
@@ -202,10 +214,26 @@ const assertAllParticipantsVerified = (ride) => {
 };
 
 /** Issue boarding OTP when participant joins ride */
-const ensureParticipantBoardingOtp = async (entry, userId) => {
+const ensureParticipantBoardingOtp = async (entry, userId, rideContext = null) => {
   const user = await User.findById(userId);
   if (user) await assignUserNoIfMissing(user);
+  const hadOtp = !!entry.boardingOtp;
   attachBoardingOtp(entry);
+
+  if (rideContext?.rideId && userId) {
+    const route =
+      rideContext.from && rideContext.to
+        ? `${rideContext.from} → ${rideContext.to}`
+        : "your ride";
+    await notifyUser(userId, {
+      title: hadOtp ? "Boarding OTP updated" : "Boarding OTP ready",
+      body: hadOtp
+        ? `Your boarding OTP for (${route}) was refreshed. Open ride details to view it.`
+        : `Your boarding OTP for (${route}) is ready. Open ride details to view your User ID and OTP.`,
+      type: hadOtp ? "boarding_otp_updated" : "boarding_otp_issued",
+      data: { rideId: String(rideContext.rideId) },
+    });
+  }
 };
 
 module.exports = {

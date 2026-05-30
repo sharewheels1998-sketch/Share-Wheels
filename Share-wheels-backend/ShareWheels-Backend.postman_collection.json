@@ -219,7 +219,7 @@
               { "key": "Authorization", "value": "Bearer {{token}}" },
               { "key": "Content-Type", "value": "application/json" }
             ],
-            "body": { "mode": "raw", "raw": "{\n  \"rideId\": \"{{rideId}}\",\n  \"from\": \"Bangalore\",\n  \"to\": \"Mysore\",\n  \"courier_type\": \"parcel\",\n  \"what_to_deliver\": \"Documents\",\n  \"courier_img\": \"https://example.com/p.png\",\n  \"amount_will\": \"120\",\n  \"date\": \"2026-05-01\",\n  \"timeSlot\": \"10:00-12:00\",\n  \"receiver_name\": \"John\",\n  \"receiver_mobile\": \"9999999998\",\n  \"receiver_alternate_mobile\": \"9999999997\",\n  \"receiver_address\": \"Mysore\"\n}" },
+            "body": { "mode": "raw", "raw": "{\n  \"rideId\": \"{{rideId}}\",\n  \"from\": \"Bangalore\",\n  \"to\": \"Mysore\",\n  \"courier_type\": \"parcel\",\n  \"what_to_deliver\": \"Documents\",\n  \"courier_img\": \"https://example.com/p.png\",\n  \"amount_will\": \"120\",\n  \"date\": \"2026-05-01\",\n  \"receiver_name\": \"John\",\n  \"receiver_mobile\": \"9999999998\",\n  \"receiver_alternate_mobile\": \"9999999997\",\n  \"receiver_address\": \"Mysore\"\n}" },
             "url": "{{baseUrl}}/courier/request-courier"
           }
         }

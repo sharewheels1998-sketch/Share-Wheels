@@ -17,7 +17,6 @@ const courierRequestSchema = new mongoose.Schema(
     what_to_deliver: { type: String, required: true },
     courier_img: { type: String, required: true },
     amount_will: { ...amountWillField, required: true },
-    timeSlot: { type: String, default: "" },
     date: { type: courierDateSchema, required: true },
     courier_receiver_details: { type: receiverDetailsSchema, required: true },
     driver_assigned_courier: assignmentSchema,

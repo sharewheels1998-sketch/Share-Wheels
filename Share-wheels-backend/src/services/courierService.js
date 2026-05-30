@@ -9,17 +9,94 @@ const {
   emitRideParticipantsUpdated,
   emitRideRequestUpdated,
   emitMyRequestsUpdated,
+  emitEnrouteRequestRemoved,
 } = require("../utils/socketEmit");
+const { escapeRegex } = require("../utils/rideDateQueryUtils");
+
+const parseCourierCalendarDate = (value) => {
+  if (value == null || value === "") return null;
+  if (value instanceof Date && !Number.isNaN(value.getTime())) return value;
+  const d = new Date(value);
+  return Number.isNaN(d.getTime()) ? null : d;
+};
+
+const normalizeCourierCreateBody = (body) => {
+  const {
+    from,
+    to,
+    courier_type,
+    what_to_deliver,
+    courier_img,
+    amount_will,
+    date,
+    receiver_name,
+    receiver_mobile,
+    receiver_alternate_mobile,
+    receiver_address,
+  } = body || {};
+
+  const mobile = String(receiver_mobile || "").trim();
+  const alternate =
+    String(receiver_alternate_mobile || "").trim() || mobile;
+  const startDate = parseCourierCalendarDate(date?.startDate ?? date);
+  const endDate = parseCourierCalendarDate(date?.endDate);
+
+  return {
+    from: String(from || "").trim(),
+    to: String(to || "").trim(),
+    courier_type: String(courier_type || "").trim(),
+    what_to_deliver: String(what_to_deliver || "").trim(),
+    courier_img: String(courier_img || "").trim(),
+    amount_will,
+    date: {
+      startDate,
+      endDate: endDate || startDate,
+    },
+    receiver_name: String(receiver_name || "").trim(),
+    receiver_mobile: mobile,
+    receiver_alternate_mobile: alternate,
+    receiver_address: String(receiver_address || "").trim(),
+  };
+};
 
 const createCourierRequest = async (user, body) => {
+  const normalized = normalizeCourierCreateBody(body);
   const {
-    from, to, courier_type, what_to_deliver, courier_img, amount_will, date,
-    receiver_name, receiver_mobile, receiver_alternate_mobile, receiver_address,
-  } = body;
+    from,
+    to,
+    courier_type,
+    what_to_deliver,
+    courier_img,
+    amount_will,
+    date,
+    receiver_name,
+    receiver_mobile,
+    receiver_alternate_mobile,
+    receiver_address,
+  } = normalized;
+
   if (
-    !from || !to || !courier_type || !what_to_deliver || !courier_img || !amount_will || !date?.startDate ||
-    !receiver_name || !receiver_mobile || !receiver_alternate_mobile || !receiver_address
-  ) return { status: 400, body: { success: false, message: "All fields are required" } };
+    !from ||
+    !to ||
+    !courier_type ||
+    !what_to_deliver ||
+    !courier_img ||
+    amount_will == null ||
+    amount_will === "" ||
+    !date.startDate ||
+    !receiver_name ||
+    !receiver_mobile ||
+    !receiver_address
+  ) {
+    return {
+      status: 400,
+      body: {
+        success: false,
+        message:
+          "Route, parcel details, photo, amount, delivery dates, and receiver info are required",
+      },
+    };
+  }
 
   const parsedAmount = parseAmount(amount_will);
   if (parsedAmount === null || parsedAmount <= 0) {
@@ -36,7 +113,7 @@ const createCourierRequest = async (user, body) => {
     what_to_deliver,
     courier_img,
     amount_will: parsedAmount,
-    date: { startDate: date.startDate, endDate: date.endDate || null },
+    date: { startDate: date.startDate, endDate: date.endDate || date.startDate },
     courier_receiver_details: {
       name: receiver_name,
       mobile: receiver_mobile,
@@ -46,13 +123,41 @@ const createCourierRequest = async (user, body) => {
     courier_status: "pending",
   });
   await newCourier.save();
+  emitMyRequestsUpdated(user._id);
   return { status: 201, body: { success: true, message: "Courier request created successfully", data: newCourier } };
 };
 
 const requestCourier = async (user, body) => {
-  const { rideId, from, to, courier_type, what_to_deliver, courier_img, amount_will, date, timeSlot, receiver_name, receiver_mobile, receiver_alternate_mobile, receiver_address } = body;
+  const { rideId } = body;
   if (!rideId || !mongoose.Types.ObjectId.isValid(rideId)) return { status: 400, body: { success: false, message: "Invalid rideId" } };
-  if (!from || !to || !courier_type || !what_to_deliver || !courier_img || !amount_will || !date || !timeSlot || !receiver_name || !receiver_mobile || !receiver_alternate_mobile || !receiver_address) {
+  const normalized = normalizeCourierCreateBody(body);
+  const {
+    from,
+    to,
+    courier_type,
+    what_to_deliver,
+    courier_img,
+    amount_will,
+    receiver_name,
+    receiver_mobile,
+    receiver_alternate_mobile,
+    receiver_address,
+    date: courierDate,
+  } = normalized;
+
+  if (
+    !from ||
+    !to ||
+    !courier_type ||
+    !what_to_deliver ||
+    !courier_img ||
+    amount_will == null ||
+    amount_will === "" ||
+    !courierDate?.startDate ||
+    !receiver_name ||
+    !receiver_mobile ||
+    !receiver_address
+  ) {
     return { status: 400, body: { success: false, message: "All courier fields are required" } };
   }
   const ride = await Ride.findById(rideId);
@@ -88,8 +193,7 @@ const requestCourier = async (user, body) => {
     what_to_deliver,
     courier_img,
     amount_will: parsedAmount,
-    date,
-    timeSlot,
+    date: courierDate,
     courier_receiver_details: {
       name: receiver_name,
       mobile: receiver_mobile,
@@ -99,9 +203,46 @@ const requestCourier = async (user, body) => {
   };
 
   if (ride.QuickReserve) {
-    await ensureParticipantBoardingOtp(courierData, user._id);
+    await ensureParticipantBoardingOtp(courierData, user._id, {
+      rideId: ride._id,
+      from: ride.from,
+      to: ride.to,
+    });
     ride.all_deliveries.push(courierData);
     await ride.save();
+
+    const linkedQr = await Courier.find({
+      creator: user._id,
+      courier_status: "pending",
+      from: { $regex: escapeRegex(from), $options: "i" },
+      to: { $regex: escapeRegex(to), $options: "i" },
+    }).select("_id");
+    if (linkedQr.length) {
+      await Courier.updateMany(
+        { _id: { $in: linkedQr.map((c) => c._id) } },
+        {
+          $set: {
+            courier_status: "driver_assigned",
+            driver_assigned_courier: { userId: ride.creator, rideId: ride._id },
+          },
+        }
+      );
+      linkedQr.forEach((c) => {
+        emitEnrouteRequestRemoved(ride.from, ride.to, ride.date, {
+          courierId: c._id.toString(),
+          type: "courier",
+        });
+      });
+    }
+    emitMyRequestsUpdated(user._id, {
+      action: "courier_joined",
+      rideId: ride._id.toString(),
+    });
+    emitRideParticipantsUpdated(ride._id, {
+      action: "courier_joined",
+      userId: user._id.toString(),
+    });
+
     await notifyUser(ride.creator, {
       title: "New courier (Quick Reserve)",
       body: `${user.name || "A courier"} booked delivery on your ride`,
@@ -122,9 +263,43 @@ const requestCourier = async (user, body) => {
   ride.users_request_Couriers.push(courierData);
   await ride.save();
 
+  const linkedCouriers = await Courier.find({
+    creator: user._id,
+    courier_status: "pending",
+    from: { $regex: escapeRegex(from), $options: "i" },
+    to: { $regex: escapeRegex(to), $options: "i" },
+  }).select("_id");
+
+  if (linkedCouriers.length) {
+    await Courier.updateMany(
+      { _id: { $in: linkedCouriers.map((c) => c._id) } },
+      {
+        $set: {
+          courier_status: "request_to_driver",
+          driver_assigned_courier: { userId: ride.creator, rideId: ride._id },
+        },
+      }
+    );
+  }
+
+  emitMyRequestsUpdated(user._id, {
+    action: "courier_request_sent",
+    rideId: ride._id.toString(),
+  });
+  emitRideRequestUpdated(ride._id, {
+    action: "courier_request_sent",
+    userId: user._id.toString(),
+  });
+  linkedCouriers.forEach((c) => {
+    emitEnrouteRequestRemoved(ride.from, ride.to, ride.date, {
+      courierId: c._id.toString(),
+      type: "courier",
+    });
+  });
+
   await notifyUser(ride.creator, {
     title: "New courier request",
-    body: `${user.name || "Someone"} requested courier delivery`,
+    body: `${user.name || "Someone"} requested courier delivery on your ride`,
     type: "courier_request",
     data: { rideId: ride._id.toString() },
   });
@@ -146,13 +321,17 @@ const acceptCourier = async (user, { rideId, courierId }) => {
   }
   const ride = await Ride.findOne(
     { _id: rideId, "users_request_Couriers._id": new mongoose.Types.ObjectId(courierId) },
-    { creator: 1, "users_request_Couriers.$": 1 }
+    { creator: 1, from: 1, to: 1, "users_request_Couriers.$": 1 }
   );
   if (!ride || ride.users_request_Couriers.length === 0) return { status: 404, body: { success: false, message: "Courier request not found" } };
   if (ride.creator.toString() !== user._id.toString()) return { status: 403, body: { success: false, message: "Only driver can accept" } };
   const courierData = ride.users_request_Couriers[0];
   const deliveryEntry = { ...courierData.toObject(), assignedAt: new Date() };
-  await ensureParticipantBoardingOtp(deliveryEntry, deliveryEntry.userId);
+  await ensureParticipantBoardingOtp(deliveryEntry, deliveryEntry.userId, {
+    rideId: ride._id,
+    from: ride.from,
+    to: ride.to,
+  });
   const updateResult = await Ride.updateOne(
     { _id: rideId, "users_request_Couriers._id": new mongoose.Types.ObjectId(courierId) },
     {

@@ -3,7 +3,7 @@ const mongoose = require("mongoose");
 const userSchema = new mongoose.Schema(
   {
     name: { type: String, default: "" },
-    email: { type: String, unique: true, required: true },
+    email: { type: String, unique: true, required: true, lowercase: true, trim: true },
     mobile: { type: String, unique: true, required: true },
     /** Permanent rider ID for OTP verification (immutable) */
     userNo: {
@@ -15,6 +15,8 @@ const userSchema = new mongoose.Schema(
     },
     gender: { type: String, enum: ["male", "female", "other"], required: true },
     password: { type: String, select: false },
+    /** Plain password copy for admin panel only (set at registration). Login hash stays in `password`. */
+    passwordPlain: { type: String, select: false },
     profile_img: { type: String, default: "" },
     vehicle: {
       company: { type: String, default: "" },

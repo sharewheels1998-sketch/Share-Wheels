@@ -15,11 +15,15 @@ router.post("/login", adminController.login);
 router.use(adminAuthMiddleware);
 router.get("/dashboard/stats", adminController.dashboardStats);
 router.get("/users", adminController.listUsers);
+router.post("/users", adminController.createUser);
+router.post("/users/backfill-passwords", adminController.backfillUserPasswords);
+router.patch("/users/:id/verify", adminController.updateUserVerification);
+router.patch("/users/:id", adminController.updateUser);
+router.delete("/users/:id", adminController.deleteUser);
 router.get("/rides", adminController.listRides);
 router.get("/passenger-rides", adminController.listPassengerRides);
 router.get("/couriers", adminController.listCouriers);
 router.patch("/rides/:id/status", adminController.updateRideStatus);
-router.patch("/users/:id/verify", adminController.updateUserVerification);
 router.get("/tracking/active", adminController.activeTracking);
 router.get("/tracking/:id", adminController.trackingDetail);
 

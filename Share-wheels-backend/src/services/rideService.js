@@ -11,8 +11,25 @@ const {
   isRideScheduledTimePassed,
   isRideScheduledTimeFuture,
   parseRideScheduledStart,
+  assertDriverActionLeadTime,
+  parsePostponedStartTime,
+  applyScheduledStartToRide,
+  MAX_POSTPONE_DURATION_MS,
+  formatStartTimeHHmm,
 } = require("../utils/rideScheduleUtils");
+const {
+  notifyRideParticipants,
+  emitRideScheduleUpdated,
+} = require("../utils/rideNotificationUtils");
+const {
+  emitRideParticipantsUpdated,
+  emitMyRequestsUpdated,
+  emitEnrouteRequestRemoved,
+  emitRideRequestUpdated,
+} = require("../utils/socketEmit");
+const { toEnrouteDateKey } = require("../utils/rideDateQueryUtils");
 const { expireStalePendingRides } = require("./rideExpiryService");
+const { normalizeStartTimeForStorage } = require("../utils/rideScheduleUtils");
 
 const escapeRegex = (str) => String(str).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
@@ -75,6 +92,8 @@ const createRide = async (user, payload) => {
     return { status: 400, body: { error: "Valid ride_amount is required" } };
   }
 
+  const normalizedStartTime = normalizeStartTimeForStorage(rideDate, startTime);
+
   const ride = await Ride.create({
     creator: user._id,
     from,
@@ -82,7 +101,7 @@ const createRide = async (user, payload) => {
     availableSeats: availableSeats || 1,
     date: rideDate,
     AlternatePhoneNumber: AlternatePhoneNumber ? String(AlternatePhoneNumber) : undefined,
-    startTime,
+    startTime: normalizedStartTime,
     vehicle: {
       type: vehicle.type || "car",
       company: vehicle.company || "",
@@ -129,26 +148,171 @@ const getRides = async (query, authUser) => {
   return { status: 200, body: rides };
 };
 
+const MIN_REASON_LENGTH = 10;
+
+const validateActionReason = (reason, label = "reason") => {
+  const trimmed = String(reason || "").trim();
+  if (trimmed.length < MIN_REASON_LENGTH) {
+    return {
+      ok: false,
+      message: `A valid ${label} is required (at least ${MIN_REASON_LENGTH} characters)`,
+    };
+  }
+  return { ok: true, value: trimmed };
+};
+
 const cancelRide = async (user, { rideId, reason }) => {
   const ride = await Ride.findById(rideId);
   if (!ride) return { status: 404, body: { message: "Ride not found" } };
   if (ride.creator.toString() !== user._id.toString()) {
     return { status: 403, body: { message: "Only ride creator can cancel this ride" } };
   }
-  const rideStart = parseRideScheduledStart(ride);
-  if (!rideStart || Number.isNaN(rideStart.getTime())) {
-    return { status: 400, body: { message: "Invalid ride schedule" } };
-  }
-  if (rideStart - new Date() < 60 * 60 * 1000) {
+  if (ride.status !== "pending") {
     return {
       status: 400,
-      body: { status: false, message: "Ride can only be cancelled at least 1 hour before the start time" },
+      body: { status: false, message: "Only pending rides can be cancelled" },
     };
   }
+  const reasonCheck = validateActionReason(reason, "cancellation reason");
+  if (!reasonCheck.ok) {
+    return { status: 400, body: { status: false, message: reasonCheck.message } };
+  }
+  const leadCheck = assertDriverActionLeadTime(ride);
+  if (!leadCheck.ok) {
+    return { status: 400, body: { status: false, message: leadCheck.message } };
+  }
   ride.status = "cancelled";
-  ride.cancel_reason = reason || "No reason provided";
+  ride.cancel_reason = reasonCheck.value;
   await ride.save();
+
+  const driverName = user.name || "Driver";
+  await notifyRideParticipants(ride, {
+    title: "Ride cancelled",
+    body: `${driverName} cancelled the ride ({route}). Reason: ${reasonCheck.value}`,
+    driverMessage: `You cancelled the ride ({route}).`,
+    type: "ride_cancelled",
+    data: { reason: reasonCheck.value },
+  });
+  emitRideParticipantsUpdated(ride._id, { action: "cancelled" });
+
   return { status: 200, body: { status: true, message: "Ride cancelled successfully", ride } };
+};
+
+const postponeRide = async (user, { rideId, newStartTime, reason }) => {
+  const ride = await Ride.findById(rideId);
+  if (!ride) return { status: 404, body: { message: "Ride not found" } };
+  if (ride.creator.toString() !== user._id.toString()) {
+    return { status: 403, body: { message: "Only ride creator can postpone this ride" } };
+  }
+  if (ride.status !== "pending") {
+    return {
+      status: 400,
+      body: { status: false, message: "Only pending rides can be postponed" },
+    };
+  }
+  if ((ride.postponeCount || 0) >= 1) {
+    return {
+      status: 400,
+      body: { status: false, message: "This ride has already been postponed once" },
+    };
+  }
+  const reasonCheck = validateActionReason(reason, "postponement reason");
+  if (!reasonCheck.ok) {
+    return { status: 400, body: { status: false, message: reasonCheck.message } };
+  }
+  const leadCheck = assertDriverActionLeadTime(ride);
+  if (!leadCheck.ok) {
+    return { status: 400, body: { status: false, message: leadCheck.message } };
+  }
+
+  const currentStart = leadCheck.scheduledStart;
+  const newStart = parsePostponedStartTime(ride, newStartTime);
+  if (!newStart || Number.isNaN(newStart.getTime())) {
+    return { status: 400, body: { status: false, message: "Invalid new start time" } };
+  }
+
+  const delayMs = newStart.getTime() - currentStart.getTime();
+  if (delayMs <= 0) {
+    return {
+      status: 400,
+      body: { status: false, message: "New start time must be after the current scheduled time" },
+    };
+  }
+  if (delayMs > MAX_POSTPONE_DURATION_MS) {
+    return {
+      status: 400,
+      body: { status: false, message: "Postponement cannot exceed 2 hours" },
+    };
+  }
+
+  if (!ride.originalScheduledStart) {
+    ride.originalScheduledStart = currentStart;
+  }
+  applyScheduledStartToRide(ride, newStart);
+  ride.postponeCount = 1;
+  ride.postponeReason = reasonCheck.value;
+  ride.postponedAt = new Date();
+  await ride.save();
+
+  const newTimeLabel = formatStartTimeHHmm(newStart);
+  const driverName = user.name || "Driver";
+  await notifyRideParticipants(ride, {
+    title: "Ride postponed",
+    body: `${driverName} postponed the ride ({route}) to ${newTimeLabel}. Reason: ${reasonCheck.value}`,
+    driverMessage: `You postponed the ride ({route}) to ${newTimeLabel}.`,
+    type: "ride_postponed",
+    data: {
+      reason: reasonCheck.value,
+      newStartTime: newStart.toISOString(),
+      postponeCount: ride.postponeCount,
+    },
+  });
+  emitRideScheduleUpdated(ride._id, "postponed", {
+    newStartTime: newStart.toISOString(),
+  });
+
+  return {
+    status: 200,
+    body: {
+      status: true,
+      message: "Ride postponed successfully",
+      ride,
+      newStartTime: newStart.toISOString(),
+    },
+  };
+};
+
+/** Hide standalone open requests once user has joined this driver ride. */
+const closeStandalonePassengerRequestsAfterJoin = async (userId, ride) => {
+  const fromRegex = { $regex: escapeRegex(String(ride.from).trim()), $options: "i" };
+  const toRegex = { $regex: escapeRegex(String(ride.to).trim()), $options: "i" };
+  const open = await PassengerRide.find({
+    creator: userId,
+    status: "pending",
+    from: fromRegex,
+    to: toRegex,
+    $or: [{ assigned_to: { $exists: false } }, { "assigned_to.rideId": null }],
+  }).lean();
+
+  if (!open.length) return;
+
+  await PassengerRide.updateMany(
+    { _id: { $in: open.map((p) => p._id) } },
+    {
+      $set: {
+        status: "cancelled",
+        assigned_to: { userId: ride.creator, rideId: ride._id },
+      },
+    }
+  );
+
+  const dateKey = toEnrouteDateKey(ride.date);
+  open.forEach((p) => {
+    emitEnrouteRequestRemoved(ride.from, ride.to, dateKey, {
+      passengerRideId: p._id.toString(),
+      type: "passenger",
+    });
+  });
 };
 
 const addPassengerDirectly = async (ride, user, seats, total_amount) => {
@@ -160,7 +324,11 @@ const addPassengerDirectly = async (ride, user, seats, total_amount) => {
     status: "accepted",
     joinedAt: new Date(),
   };
-  await ensureParticipantBoardingOtp(passengerEntry, userId);
+  await ensureParticipantBoardingOtp(passengerEntry, userId, {
+    rideId: ride._id,
+    from: ride.from,
+    to: ride.to,
+  });
   ride.passengers.push(passengerEntry);
   ride.availableSeats -= seats;
   await ride.save();
@@ -181,6 +349,13 @@ const addPassengerDirectly = async (ride, user, seats, total_amount) => {
     },
     { upsert: true }
   );
+
+  await closeStandalonePassengerRequestsAfterJoin(userId, ride);
+  emitMyRequestsUpdated(userId, { action: "passenger_joined", rideId: ride._id.toString() });
+  emitRideParticipantsUpdated(ride._id, {
+    action: "passenger_joined",
+    userId: userId.toString(),
+  });
 
   await notifyUser(ride.creator, {
     title: "New passenger (Quick Reserve)",
@@ -252,6 +427,8 @@ const sendPassengerRequest = async (user, { rideId, requires_seats }) => {
     };
   }
 
+  const requesterName = user.name || "Someone";
+
   ride.passenger_requested_ride.push({
     userId,
     requires_seats: seats,
@@ -276,9 +453,20 @@ const sendPassengerRequest = async (user, { rideId, requires_seats }) => {
     { upsert: true, new: true, setDefaultsOnInsert: true }
   );
 
+  await closeStandalonePassengerRequestsAfterJoin(userId, ride);
+  emitMyRequestsUpdated(userId, {
+    action: "passenger_request_sent",
+    rideId: ride._id.toString(),
+  });
+  emitRideRequestUpdated(ride._id, {
+    action: "passenger_request_sent",
+    userId: userId.toString(),
+    seats,
+  });
+
   await notifyUser(ride.creator, {
     title: "New passenger request",
-    body: `${user.name || "Someone"} requested ${seats} seat(s)`,
+    body: `${requesterName} requested ${seats} seat(s) on your ride`,
     type: "passenger_request",
     data: { rideId: ride._id.toString() },
   });
@@ -469,7 +657,7 @@ const getRideDetails = async (rideId, viewerId) => {
   if (!mongoose.Types.ObjectId.isValid(rideId)) return { status: 400, body: { success: false, message: "Invalid Ride ID" } };
   const ride = await Ride.findById(rideId)
     .select(
-      "passengers all_deliveries passenger_requested_ride users_request_Couriers status creator vehicle from to date startTime ride_amount availableSeats CanCarryCourier QuickReserve"
+      "passengers all_deliveries passenger_requested_ride users_request_Couriers status creator vehicle from to date startTime ride_amount availableSeats CanCarryCourier QuickReserve postponeCount postponeReason postponedAt originalScheduledStart cancel_reason"
     )
     .populate("creator", USER_FIELDS)
     .populate("passengers.userId", USER_FIELDS)
@@ -526,6 +714,11 @@ const getRideDetails = async (rideId, viewerId) => {
         to: ride.to,
         date: ride.date,
         startTime: ride.startTime,
+        postponeCount: ride.postponeCount || 0,
+        postponeReason: ride.postponeReason,
+        postponedAt: ride.postponedAt,
+        originalScheduledStart: ride.originalScheduledStart,
+        cancel_reason: ride.cancel_reason,
         ride_amount: ride.ride_amount,
         availableSeats: ride.availableSeats,
         CanCarryCourier: !!ride.CanCarryCourier,
@@ -546,6 +739,126 @@ const getRideDetails = async (rideId, viewerId) => {
   };
 };
 
+/** Normalize any stored/sent date to YYYY-MM-DD (calendar day, UTC-safe). */
+const parseCalendarDateString = (dateValue) => {
+  if (dateValue == null || dateValue === "") return null;
+  if (typeof dateValue === "string") {
+    const trimmed = dateValue.trim();
+    const ymd = trimmed.match(/^(\d{4}-\d{2}-\d{2})/);
+    if (ymd) return ymd[1];
+  }
+  if (typeof dateValue === "object" && !(dateValue instanceof Date)) {
+    if (dateValue.startDate != null) return parseCalendarDateString(dateValue.startDate);
+    if (dateValue.endDate != null) return parseCalendarDateString(dateValue.endDate);
+  }
+  const d = new Date(dateValue);
+  if (Number.isNaN(d.getTime())) return null;
+  const y = d.getUTCFullYear();
+  const m = String(d.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(d.getUTCDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+};
+
+/** Inclusive calendar range for matching driver rides to a request's date span. */
+const calendarRangeFromRequestDates = (startValue, endValue) => {
+  let startStr = parseCalendarDateString(startValue);
+  if (!startStr) return null;
+  let endStr = parseCalendarDateString(endValue) || startStr;
+  if (endStr < startStr) {
+    const tmp = startStr;
+    startStr = endStr;
+    endStr = tmp;
+  }
+  const startRange = calendarDayRange(startStr);
+  const endRange = calendarDayRange(endStr);
+  if (!startRange || !endRange) return null;
+  return { startDate: startRange.startDate, endDate: endRange.endDate };
+};
+
+const userIdOnRideRequests = (ride, userId) => {
+  const uid = String(userId);
+  const passengerPending = (ride.passenger_requested_ride || []).some(
+    (p) => String(p.userId?._id || p.userId) === uid
+  );
+  const courierPending = (ride.users_request_Couriers || []).some(
+    (c) => String(c.userId?._id || c.userId) === uid
+  );
+  return { passengerPending, courierPending };
+};
+
+const serializeMatchingRide = (ride, userId) => {
+  if (!ride) return null;
+  const { passengerPending, courierPending } = userIdOnRideRequests(ride, userId);
+  return {
+    _id: ride._id,
+    from: ride.from,
+    to: ride.to,
+    date: ride.date,
+    startTime: ride.startTime,
+    availableSeats: ride.availableSeats,
+    ride_amount: ride.ride_amount,
+    status: ride.status,
+    CanCarryCourier: !!ride.CanCarryCourier,
+    QuickReserve: !!ride.QuickReserve,
+    vehicle: ride.vehicle,
+    creator: ride.creator
+      ? {
+          _id: ride.creator._id,
+          name: ride.creator.name,
+          mobile: ride.creator.mobile,
+          profile_img: ride.creator.profile_img,
+        }
+      : null,
+    passengerRequestPending: passengerPending,
+    courierRequestPending: courierPending,
+  };
+};
+
+const MATCHING_RIDE_SELECT =
+  "from to date startTime availableSeats ride_amount status vehicle creator CanCarryCourier QuickReserve passenger_requested_ride.userId users_request_Couriers.userId";
+
+const findMatchingRidesForRequest = async ({
+  from,
+  to,
+  date,
+  dateEnd = null,
+  userId,
+  courierOnly = false,
+  excludeRideId = null,
+}) => {
+  if (!from?.trim() || !to?.trim()) return [];
+  const range = calendarRangeFromRequestDates(date, dateEnd);
+  if (!range) return [];
+
+  const filter = {
+    from: { $regex: escapeRegex(String(from).trim()), $options: "i" },
+    to: { $regex: escapeRegex(String(to).trim()), $options: "i" },
+    date: { $gte: range.startDate, $lte: range.endDate },
+    status: "pending",
+    creator: { $ne: userId },
+  };
+  if (courierOnly) filter.CanCarryCourier = true;
+  if (excludeRideId) filter._id = { $ne: excludeRideId };
+
+  const rides = await Ride.find(filter)
+    .select(MATCHING_RIDE_SELECT)
+    .populate("creator", "name mobile profile_img")
+    .sort({ date: 1, startTime: 1 })
+    .limit(10)
+    .lean();
+
+  return rides.map((r) => serializeMatchingRide(r, userId));
+};
+
+const fetchLinkedRide = async (rideId, userId) => {
+  if (!rideId) return null;
+  const ride = await Ride.findById(rideId)
+    .select(MATCHING_RIDE_SELECT)
+    .populate("creator", "name mobile profile_img")
+    .lean();
+  return serializeMatchingRide(ride, userId);
+};
+
 const getMyRequests = async (user) => {
   const userId = new mongoose.Types.ObjectId(user._id);
 
@@ -557,9 +870,12 @@ const getMyRequests = async (user) => {
   const standalonePassengerRequests = passengerData.map((p) => ({
     requestId: p._id,
     passengerRideId: p._id,
+    requestKind: "standalone",
+    rideId: null,
     from: p.from,
     to: p.to,
     date: p.date,
+    date_end: p.date_end,
     seats: p.seats_needed,
     amount: p.amount_will,
     luggage: p.luggage_included,
@@ -568,55 +884,91 @@ const getMyRequests = async (user) => {
     type: "passenger",
   }));
 
-  const userRidesDoc = await UserRides.findOne({ creator: userId })
-    .populate("my_pending_ride_requests.rideId", "from to date startTime")
-    .populate("my_pending_ride_requests.driverId", "name mobile")
+  const activeJoinOnRoute = await Ride.find({
+    status: { $in: ["pending", "started"] },
+    $or: [
+      { "passenger_requested_ride.userId": userId },
+      { "passengers.userId": userId },
+    ],
+  })
+    .select("from to")
     .lean();
 
-  const rideJoinRequests = (userRidesDoc?.my_pending_ride_requests || [])
-    .filter((r) => (!r.status || r.status === "pending") && r.rideId)
-    .map((r) => ({
-      requestId: r.rideId?._id || r.rideId,
-      rideId: r.rideId?._id || r.rideId,
-      from: r.rideId?.from,
-      to: r.rideId?.to,
-      date: r.rideId?.date,
-      startTime: r.rideId?.startTime,
-      seats: r.seats_requested,
-      amount: r.amount_requested,
-      driver: r.driverId ? { name: r.driverId.name, mobile: r.driverId.mobile } : null,
-      requestedAt: r.requestedAt,
-      status: r.status || "pending",
-      type: "passenger",
-    }));
+  const passengerRequestsBase = standalonePassengerRequests.filter((p) => {
+    const fromKey = String(p.from || "").trim().toLowerCase();
+    const toKey = String(p.to || "").trim().toLowerCase();
+    const hasJoinOnRoute = activeJoinOnRoute.some(
+      (r) =>
+        String(r.from || "").trim().toLowerCase() === fromKey &&
+        String(r.to || "").trim().toLowerCase() === toKey
+    );
+    return !hasJoinOnRoute;
+  });
 
-  const passengerRequests = [...standalonePassengerRequests, ...rideJoinRequests];
+  const passengerRequests = await Promise.all(
+    passengerRequestsBase.map(async (req) => {
+      const matchingRides = await findMatchingRidesForRequest({
+        from: req.from,
+        to: req.to,
+        date: req.date,
+        dateEnd: req.date_end,
+        userId,
+      });
+      return { ...req, linkedRide: null, matchingRides };
+    })
+  );
 
   const courierRequestsData = await Courier.find({
-    creator: userId,
+    creator: { $in: [userId, user._id] },
     courier_status: { $in: ["pending", "request_to_driver"] },
-    "driver_assigned_courier.rideId": { $exists: false },
   }).lean();
-  const courierRequests = courierRequestsData
-    .filter((c) => !c.driver_assigned_courier?.rideId)
+  const courierRequestsBase = courierRequestsData
     .map((c) => ({
-    requestId: c._id,
-    courierNumber: c.courierNumber,
-    from: c.from,
-    to: c.to,
-    parcel: c.what_to_deliver,
-    amount: c.amount_will,
-    date: c.date,
-    timeSlot: c.timeSlot,
-    receiver: c.courier_receiver_details,
-    status: c.courier_status,
-    assignedRide: c.driver_assigned_courier?.rideId || null,
-    requestedAt: c.createdAt,
-    type: "courier",
-  }));
+      requestId: c._id,
+      requestKind: "courier",
+      courierNumber: c.courierNumber,
+      from: c.from,
+      to: c.to,
+      parcel: c.what_to_deliver,
+      what_to_deliver: c.what_to_deliver,
+      courier_type: c.courier_type,
+      courier_img: c.courier_img,
+      amount: c.amount_will,
+      amount_will: c.amount_will,
+      date: c.date,
+      receiver: c.courier_receiver_details,
+      status: c.courier_status,
+      assignedRide: c.driver_assigned_courier?.rideId || null,
+      requestedAt: c.createdAt,
+      type: "courier",
+    }));
+
+  const courierRequests = await Promise.all(
+    courierRequestsBase.map(async (c) => {
+      const matchingRides = await findMatchingRidesForRequest({
+        from: c.from,
+        to: c.to,
+        date: c.date?.startDate || c.date,
+        dateEnd: c.date?.endDate,
+        userId,
+        courierOnly: true,
+      });
+      const linkedRideId = c.driver_assigned_courier?.rideId || null;
+      const linkedRide = linkedRideId
+        ? await fetchLinkedRide(linkedRideId, userId)
+        : null;
+      return { ...c, linkedRide, matchingRides };
+    })
+  );
+
   return {
     status: 200,
-    body: { success: true, passengerRequests, courierRequests, total: passengerRequests.length + courierRequests.length },
+    body: {
+      success: true,
+      passengerRequests,
+      courierRequests,
+      total: passengerRequests.length + courierRequests.length,
+    },
   };
 };
 
@@ -625,6 +977,7 @@ module.exports = {
   createRide,
   getRides,
   cancelRide,
+  postponeRide,
   sendPassengerRequest,
   listRidesByPhase,
   getRideDetails,

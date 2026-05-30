@@ -1,10 +1,12 @@
+const { toEnrouteDateKey } = require("./rideDateQueryUtils");
+
 const normalizeRouteKey = (value) =>
   String(value || "")
     .trim()
     .toLowerCase();
 
 const enrouteRoomKey = (from, to, date) => {
-  const d = date ? new Date(date).toISOString().split("T")[0] : "any";
+  const d = toEnrouteDateKey(date);
   return `enroute:${normalizeRouteKey(from)}:${normalizeRouteKey(to)}:${d}`;
 };
 
@@ -37,6 +39,11 @@ const emitRideRequestUpdated = (rideId, payload = {}) => {
     .emit("rideRequestUpdated", { rideId: rideId.toString(), ...payload });
 };
 
+/** Real-time in-app notification bell + foreground refresh for a user. */
+const emitNotificationReceived = (userId, payload = {}) => {
+  emitToUser(userId, "notificationReceived", payload);
+};
+
 module.exports = {
   enrouteRoomKey,
   emitToUser,
@@ -44,4 +51,5 @@ module.exports = {
   emitMyRequestsUpdated,
   emitEnrouteRequestRemoved,
   emitRideRequestUpdated,
+  emitNotificationReceived,
 };

@@ -1,7 +1,10 @@
+const bcrypt = require("bcryptjs");
 const User = require("../models/userModel");
 const Ride = require("../models/rideModel");
 const PassengerRide = require("../models/passengerRideModel");
 const Courier = require("../models/courierModel");
+
+const { mapUserForAdmin } = require("./adminUserService");
 
 const getDashboardStats = async () => {
   const [
@@ -55,7 +58,7 @@ const listUsers = async ({ page = 1, limit = 20, search = "" }) => {
 
   const [users, total] = await Promise.all([
     User.find(filter)
-      .select("-password -otp -otpExpires")
+      .select("+passwordPlain")
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(Number(limit))
@@ -65,7 +68,55 @@ const listUsers = async ({ page = 1, limit = 20, search = "" }) => {
 
   return {
     status: 200,
-    body: { success: true, total, page: Number(page), users },
+    body: {
+      success: true,
+      total,
+      page: Number(page),
+      users: users.map(mapUserForAdmin),
+    },
+  };
+};
+
+/** Dev/admin: fill missing passwordPlain so the admin table can show passwords for legacy users. */
+const backfillUserPasswords = async ({ defaultPassword } = {}) => {
+  const plain =
+    String(defaultPassword || process.env.BACKFILL_USER_PASSWORD || "password123").trim();
+  if (plain.length < 6) {
+    return {
+      status: 400,
+      body: { message: "Default password must be at least 6 characters" },
+    };
+  }
+
+  const missing = await User.find({
+    $or: [
+      { passwordPlain: { $exists: false } },
+      { passwordPlain: null },
+      { passwordPlain: "" },
+    ],
+  }).select("+password");
+
+  const hash = await bcrypt.hash(plain, 10);
+  let updated = 0;
+
+  for (const user of missing) {
+    user.passwordPlain = plain;
+    user.password = hash;
+    await user.save();
+    updated += 1;
+  }
+
+  return {
+    status: 200,
+    body: {
+      success: true,
+      updated,
+      defaultPassword: plain,
+      message:
+        updated > 0
+          ? `Updated ${updated} user(s). All use password: ${plain}`
+          : "All users already have passwords stored for admin display.",
+    },
   };
 };
 
@@ -156,6 +207,7 @@ const getTrackingDetail = async (rideId) => rideTrackingService.getRideTracking(
 module.exports = {
   getDashboardStats,
   listUsers,
+  backfillUserPasswords,
   listRides,
   listPassengerRides,
   listCouriers,

@@ -57,12 +57,13 @@ const swaggerSpec = swaggerJsdoc({
         UserIdsRequest: { type: "object", required: ["userIds"], properties: { userIds: { type: "array", items: { type: "string" } } } },
         RideIdsRequest: { type: "object", required: ["rideIds"], properties: { rideIds: { type: "array", items: { type: "string" } } } },
         CreateRideRequest: { type: "object", required: ["from", "to", "date", "startTime", "ride_amount"], properties: { from: { type: "string" }, to: { type: "string" }, availableSeats: { type: "number" }, ride_amount: { type: "number" }, date: { type: "string" }, startTime: { type: "string" }, AlternatePhoneNumber: { type: "string" }, CanCarryCourier: { type: "boolean" }, QuickReserve: { type: "boolean" } } },
-        CancelRideRequest: { type: "object", required: ["rideId"], properties: { rideId: { type: "string" }, reason: { type: "string" } } },
+        CancelRideRequest: { type: "object", required: ["rideId", "reason"], properties: { rideId: { type: "string" }, reason: { type: "string", minLength: 10 } } },
+        PostponeRideRequest: { type: "object", required: ["rideId", "newStartTime", "reason"], properties: { rideId: { type: "string" }, newStartTime: { type: "string" }, reason: { type: "string", minLength: 10 } } },
         PassengerSendRequest: { type: "object", required: ["rideId", "requires_seats"], properties: { rideId: { type: "string" }, requires_seats: { type: "number" } } },
         PassengerCreateRequest: { type: "object", required: ["from", "to", "ride_need_date", "seats_needed", "amount_will"], properties: { from: { type: "string" }, to: { type: "string" }, ride_need_date: { type: "string" }, seats_needed: { type: "number" }, amount_will: { type: "number" }, date: { type: "string" }, luggage_included: { type: "boolean" } } },
         DriverPickPassengerRequest: { type: "object", required: ["passenger_rideId", "rideId"], properties: { passenger_rideId: { type: "string" }, rideId: { type: "string" } } },
         CourierCreateRequest: { type: "object", required: ["from", "to", "courier_type", "what_to_deliver", "courier_img", "amount_will", "date", "receiver_name", "receiver_mobile", "receiver_alternate_mobile", "receiver_address"], properties: { from: { type: "string" }, to: { type: "string" }, courier_type: { type: "string" }, what_to_deliver: { type: "string" }, courier_img: { type: "string" }, amount_will: { type: "string" }, date: { type: "object", properties: { startDate: { type: "string" }, endDate: { type: "string" } } }, receiver_name: { type: "string" }, receiver_mobile: { type: "string" }, receiver_alternate_mobile: { type: "string" }, receiver_address: { type: "string" } } },
-        CourierRideRequest: { type: "object", required: ["rideId", "from", "to", "courier_type", "what_to_deliver", "courier_img", "amount_will", "date", "timeSlot", "receiver_name", "receiver_mobile", "receiver_alternate_mobile", "receiver_address"], properties: { rideId: { type: "string" }, from: { type: "string" }, to: { type: "string" }, courier_type: { type: "string" }, what_to_deliver: { type: "string" }, courier_img: { type: "string" }, amount_will: { type: "string" }, date: { type: "string" }, timeSlot: { type: "string" }, receiver_name: { type: "string" }, receiver_mobile: { type: "string" }, receiver_alternate_mobile: { type: "string" }, receiver_address: { type: "string" } } },
+        CourierRideRequest: { type: "object", required: ["rideId", "from", "to", "courier_type", "what_to_deliver", "courier_img", "amount_will", "date", "receiver_name", "receiver_mobile", "receiver_alternate_mobile", "receiver_address"], properties: { rideId: { type: "string" }, from: { type: "string" }, to: { type: "string" }, courier_type: { type: "string" }, what_to_deliver: { type: "string" }, courier_img: { type: "string" }, amount_will: { type: "string" }, date: { type: "string" }, receiver_name: { type: "string" }, receiver_mobile: { type: "string" }, receiver_alternate_mobile: { type: "string" }, receiver_address: { type: "string" } } },
         RideCourierActionRequest: { type: "object", required: ["rideId", "courierId"], properties: { rideId: { type: "string" }, courierId: { type: "string" } } },
         DriverPassengerActionRequest: { type: "object", required: ["rideId", "passenger_userId"], properties: { rideId: { type: "string" }, passenger_userId: { type: "string" } } },
         StartEndRideRequest: { type: "object", required: ["rideId"], properties: { rideId: { type: "string" } } },
@@ -133,11 +134,23 @@ const swaggerSpec = swaggerJsdoc({
       "/rides/ride/cancel": {
         post: {
           tags: ["Rides"],
-          summary: "Cancel ride",
+          summary: "Cancel ride (driver, ≥2h before start, reason required)",
           security: [{ bearerAuth: [] }],
           requestBody: {
             required: true,
             content: { "application/json": { schema: { $ref: "#/components/schemas/CancelRideRequest" } } },
+          },
+          responses: { 200: { description: "OK" } },
+        },
+      },
+      "/rides/ride/postpone": {
+        post: {
+          tags: ["Rides"],
+          summary: "Postpone ride once (driver, ≥2h before, max +2h delay, reason required)",
+          security: [{ bearerAuth: [] }],
+          requestBody: {
+            required: true,
+            content: { "application/json": { schema: { $ref: "#/components/schemas/PostponeRideRequest" } } },
           },
           responses: { 200: { description: "OK" } },
         },

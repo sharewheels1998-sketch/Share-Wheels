@@ -31,7 +31,7 @@ const receiverDetailsSchema = new mongoose.Schema(
   {
     name: { type: String, required: true },
     mobile: { type: String, required: true },
-    alternate_mobile: { type: String, required: true },
+    alternate_mobile: { type: String, default: "" },
     Address: { type: String, required: true },
   },
   { _id: false }
@@ -92,7 +92,6 @@ const courierOnRideSchema = new mongoose.Schema(
       startDate: { type: String },
       endDate: { type: String },
     },
-    timeSlot: String,
     courier_receiver_details: {
       name: String,
       mobile: String,

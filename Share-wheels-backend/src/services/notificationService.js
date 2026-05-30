@@ -2,40 +2,73 @@ const mongoose = require("mongoose");
 const User = require("../models/userModel");
 const Notification = require("../models/notificationModel");
 const { sendPushNotification } = require("../utils/firebaseAdmin");
+const { emitNotificationReceived } = require("../utils/socketEmit");
+
+const resolveUserId = (userId) => {
+  if (!userId) return null;
+  if (userId instanceof mongoose.Types.ObjectId) return userId;
+  if (userId._id) return userId._id;
+  try {
+    return new mongoose.Types.ObjectId(userId);
+  } catch {
+    return null;
+  }
+};
 
 /**
- * Persist in-app notification and send FCM push when token exists.
+ * Persist in-app notification, push via FCM when possible, and notify connected clients.
  */
 const notifyUser = async (userId, { title, body, type = "general", data = {} }) => {
   if (!userId || !title || !body) return { saved: false, pushed: false };
 
-  const uid =
-    userId instanceof mongoose.Types.ObjectId
-      ? userId
-      : new mongoose.Types.ObjectId(userId);
+  const uid = resolveUserId(userId);
+  if (!uid) return { saved: false, pushed: false };
 
-  const doc = await Notification.create({
-    userId: uid,
+  const dataPayload = Object.fromEntries(
+    Object.entries(data || {}).map(([k, v]) => [k, v == null ? "" : String(v)])
+  );
+
+  let doc;
+  try {
+    doc = await Notification.create({
+      userId: uid,
+      title,
+      body,
+      type,
+      data: dataPayload,
+      read: false,
+    });
+  } catch (err) {
+    console.warn("[notifyUser] save failed:", err.message);
+    return { saved: false, pushed: false };
+  }
+
+  const socketPayload = {
+    notificationId: doc._id.toString(),
     title,
     body,
     type,
-    data,
-    read: false,
-  });
+    ...dataPayload,
+  };
+  emitNotificationReceived(uid, socketPayload);
 
   const user = await User.findById(uid).select("fcmToken");
   let pushed = false;
 
   if (user?.fcmToken) {
-    const result = await sendPushNotification(user.fcmToken, title, body, {
-      type,
-      notificationId: doc._id.toString(),
-      ...data,
-    });
-    pushed = !!result?.success;
-    if (result?.invalidToken) {
-      user.fcmToken = undefined;
-      await user.save();
+    try {
+      const result = await sendPushNotification(user.fcmToken, title, body, {
+        type,
+        notificationId: doc._id.toString(),
+        ...dataPayload,
+      });
+      pushed = !!result?.success;
+      if (result?.invalidToken) {
+        user.fcmToken = undefined;
+        await user.save();
+      }
+    } catch (err) {
+      console.warn("[notifyUser] FCM failed:", err.message);
     }
   }
 

@@ -75,9 +75,24 @@ const courierOverlapsRideDay = (dayStart, dayEnd) => ({
   ],
 });
 
+/** YYYY-MM-DD key for enroute socket rooms (align with mobile formatLocalISODate). */
+const toEnrouteDateKey = (dateInput) => {
+  if (dateInput == null || dateInput === "") return "any";
+  const str = String(dateInput).trim();
+  const ymd = str.match(/^(\d{4}-\d{2}-\d{2})/);
+  if (ymd) return ymd[1];
+  const d = new Date(dateInput);
+  if (Number.isNaN(d.getTime())) return "any";
+  const y = d.getUTCFullYear();
+  const m = String(d.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(d.getUTCDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+};
+
 module.exports = {
   escapeRegex,
   getRideDayBounds,
   passengerOverlapsRideDay,
   courierOverlapsRideDay,
+  toEnrouteDateKey,
 };

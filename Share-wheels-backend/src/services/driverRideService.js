@@ -5,6 +5,7 @@ const UserRides = require("../models/userRides");
 const Courier = require("../models/courierModel");
 const User = require("../models/userModel");
 const { notifyUser } = require("./notificationService");
+const { notifyRideParticipants } = require("../utils/rideNotificationUtils");
 const { getRideDetails } = require("./rideService");
 const {
   emitToUser,
@@ -58,7 +59,11 @@ const acceptPassengerRequest = async (user, { rideId, passenger_userId }) => {
     status: "accepted",
     joinedAt: new Date(),
   };
-  await ensureParticipantBoardingOtp(passengerEntry, reqObj.userId);
+  await ensureParticipantBoardingOtp(passengerEntry, reqObj.userId, {
+    rideId: ride._id,
+    from: ride.from,
+    to: ride.to,
+  });
   ride.passengers.push(passengerEntry);
   ride.availableSeats -= seatsNeeded;
   ride.passenger_requested_ride = ride.passenger_requested_ride.filter((item) => item.userId.toString() !== passenger_userId.toString());
@@ -71,6 +76,10 @@ const acceptPassengerRequest = async (user, { rideId, passenger_userId }) => {
     },
     { upsert: true }
   );
+  emitEnrouteRequestRemoved(ride.from, ride.to, ride.date, {
+    type: "passenger",
+    userId: passenger_userId.toString(),
+  });
   const driver = await User.findById(user._id);
   await notifyUser(passenger_userId, {
     title: "Ride request accepted",
@@ -103,6 +112,10 @@ const rejectPassengerRequest = async (user, { rideId, passenger_userId }) => {
   ride.droput_Passengers.push({ userId: reqObj.userId, requires_seats: reqObj.requires_seats, ride_amount: reqObj.ride_amount, status: "rejected", joinedAt: new Date() });
   ride.passenger_requested_ride = ride.passenger_requested_ride.filter((item) => item.userId.toString() !== passenger_userId.toString());
   await ride.save();
+  await UserRides.findOneAndUpdate(
+    { creator: passenger_userId },
+    { $pull: { my_pending_ride_requests: { rideId: ride._id } } }
+  );
   const driver = await User.findById(user._id);
   await notifyUser(passenger_userId, {
     title: "Ride request declined",
@@ -193,6 +206,16 @@ const startRide = async (user, { rideId }) => {
   ride.markModified("liveTracking");
   await ride.save();
 
+  const driverName = user.name || "Driver";
+  await notifyRideParticipants(ride, {
+    title: "Ride started",
+    body: `${driverName} has started the ride ({route}).`,
+    driverMessage: `You started the ride ({route}).`,
+    type: "ride_started",
+    excludeDriver: false,
+  });
+  emitRideParticipantsUpdated(ride._id, { action: "started" });
+
   if (global.io) {
     global.io.to("admin:tracking").emit("rideStarted", {
       rideId: ride._id.toString(),
@@ -219,6 +242,16 @@ const endRide = async (user, { rideId }) => {
   }
   await ride.save();
 
+  const driverName = user.name || "Driver";
+  await notifyRideParticipants(ride, {
+    title: "Ride completed",
+    body: `${driverName} has completed the ride ({route}). Thank you for riding with Share Wheels.`,
+    driverMessage: `You completed the ride ({route}).`,
+    type: "ride_completed",
+    excludeDriver: false,
+  });
+  emitRideParticipantsUpdated(ride._id, { action: "completed" });
+
   if (global.io) {
     global.io.to("admin:tracking").emit("rideEnded", { rideId: ride._id.toString() });
   }
@@ -226,7 +259,7 @@ const endRide = async (user, { rideId }) => {
   return { status: 200, body: { success: true, message: "Ride ended successfully", ride } };
 };
 
-const enrouteRequests = async (user, { from, to, date }) => {
+const enrouteRequests = async (user, { from, to, date, rideId }) => {
   if (!from || !to || !date) {
     return { status: 400, body: { success: false, message: "from, to and date are required" } };
   }
@@ -240,6 +273,27 @@ const enrouteRequests = async (user, { from, to, date }) => {
   const toTrim = String(to).trim();
   const { start: startOfDay, end: endOfDay } = bounds;
 
+  let excludeUserIds = new Set();
+  if (rideId && mongoose.Types.ObjectId.isValid(rideId)) {
+    const ride = await Ride.findById(rideId)
+      .select("passenger_requested_ride.userId passengers.userId users_request_Couriers.userId")
+      .lean();
+    if (ride) {
+      (ride.passenger_requested_ride || []).forEach((p) => {
+        const id = p.userId?._id || p.userId;
+        if (id) excludeUserIds.add(String(id));
+      });
+      (ride.passengers || []).forEach((p) => {
+        const id = p.userId?._id || p.userId;
+        if (id) excludeUserIds.add(String(id));
+      });
+      (ride.users_request_Couriers || []).forEach((c) => {
+        const id = c.userId?._id || c.userId;
+        if (id) excludeUserIds.add(String(id));
+      });
+    }
+  }
+
   const passengers = await PassengerRide.find({
     from: { $regex: escapeRegex(fromTrim), $options: "i" },
     to: { $regex: escapeRegex(toTrim), $options: "i" },
@@ -248,9 +302,12 @@ const enrouteRequests = async (user, { from, to, date }) => {
     ...passengerOverlapsRideDay(startOfDay, endOfDay),
     $or: [{ assigned_to: { $exists: false } }, { "assigned_to.rideId": null }],
   }).populate("creator", "name gender profile_img");
-  const passengerRequests = passengers.map((p) => ({
+  const passengerRequests = passengers
+    .filter((p) => !excludeUserIds.has(String(p.creator?._id || p.creator)))
+    .map((p) => ({
     request_type: "passenger",
     passengerId: p._id,
+    creatorId: p.creator?._id,
     name: p.creator?.name || "",
     gender: p.creator?.gender || "",
     profile: p.creator?.profile_img || "",
@@ -266,16 +323,19 @@ const enrouteRequests = async (user, { from, to, date }) => {
     from: { $regex: escapeRegex(fromTrim), $options: "i" },
     to: { $regex: escapeRegex(toTrim), $options: "i" },
     creator: { $ne: user._id },
-    courier_status: { $in: ["pending", "request_to_driver"] },
+    courier_status: "pending",
     $or: [
       { driver_assigned_courier: { $exists: false } },
       { "driver_assigned_courier.rideId": null },
     ],
     ...courierOverlapsRideDay(startOfDay, endOfDay),
   }).populate("creator", "name gender profile_img");
-  const courierRequests = couriers.map((c) => ({
+  const courierRequests = couriers
+    .filter((c) => !excludeUserIds.has(String(c.creator?._id || c.creator)))
+    .map((c) => ({
     request_type: "courier",
     courierId: c._id,
+    creatorId: c.creator?._id,
     courierNumber: c.courierNumber,
     name: c.creator?.name || "",
     gender: c.creator?.gender || "",
@@ -284,7 +344,6 @@ const enrouteRequests = async (user, { from, to, date }) => {
     what_to_deliver: c.what_to_deliver,
     courier_img: c.courier_img,
     amount: c.amount_will,
-    timeSlot: c.timeSlot,
     from: c.from,
     to: c.to,
     date: c.date,
@@ -316,11 +375,14 @@ const pickCourier = async (user, { rideId, courierId }) => {
     courier_img: courier.courier_img,
     amount_will: courier.amount_will,
     date: { startDate: courier.date?.startDate, endDate: courier.date?.endDate },
-    timeSlot: courier.timeSlot,
     courier_receiver_details: courier.courier_receiver_details,
     assignedAt: new Date(),
   };
-  await ensureParticipantBoardingOtp(courierEntry, courier.creator);
+  await ensureParticipantBoardingOtp(courierEntry, courier.creator, {
+    rideId: ride._id,
+    from: ride.from,
+    to: ride.to,
+  });
   ride.all_deliveries.push(courierEntry);
   ride.users_request_Couriers = (ride.users_request_Couriers || []).filter(
     (r) => r.userId?.toString() !== courier.creator.toString()
@@ -352,7 +414,7 @@ const pickCourier = async (user, { rideId, courierId }) => {
     courierId: courier._id.toString(),
     rideId: ride._id.toString(),
   });
-  emitEnrouteRequestRemoved(courier.from, courier.to, courier.date?.startDate || courier.date, {
+  emitEnrouteRequestRemoved(ride.from, ride.to, ride.date, {
     courierId: courier._id.toString(),
     type: "courier",
   });

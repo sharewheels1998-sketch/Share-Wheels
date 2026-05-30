@@ -41,6 +41,7 @@ const createPassengerRequest = async (user, { from, to, ride_need_date, seats_ne
     date: new Date(startDateRaw),
     date_end: endDateRaw ? new Date(endDateRaw) : null,
   });
+  emitMyRequestsUpdated(user._id);
   return { status: 200, body: { message: "Passenger request created", passengerRide } };
 };
 
@@ -104,7 +105,11 @@ const pickPassenger = async (user, { passenger_rideId, rideId }) => {
     status: "accepted",
     joinedAt: new Date(),
   };
-  await ensureParticipantBoardingOtp(passengerEntry, passengerRide.creator);
+  await ensureParticipantBoardingOtp(passengerEntry, passengerRide.creator, {
+    rideId: ride._id,
+    from: ride.from,
+    to: ride.to,
+  });
   ride.passengers.push(passengerEntry);
   ride.availableSeats -= passengerRide.seats_needed;
   await ride.save();
@@ -140,7 +145,7 @@ const pickPassenger = async (user, { passenger_rideId, rideId }) => {
     passengerRideId: passengerRide._id.toString(),
     rideId: ride._id.toString(),
   });
-  emitEnrouteRequestRemoved(passengerRide.from, passengerRide.to, passengerRide.date, {
+  emitEnrouteRequestRemoved(ride.from, ride.to, ride.date, {
     passengerRideId: passengerRide._id.toString(),
     type: "passenger",
   });

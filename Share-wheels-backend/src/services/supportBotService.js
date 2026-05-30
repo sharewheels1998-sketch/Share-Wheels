@@ -247,7 +247,7 @@ const replyForIntent = (intent, message, snap) => {
 
     case INTENTS.CANCEL:
       return {
-        reply: "Drivers cancel at least 1 hour before start. Your cancelled rides appear in history.",
+        reply: "Drivers can cancel or postpone at least 2 hours before start (postpone once, up to 2 hours). A valid reason is required. Your cancelled rides appear in history.",
         suggestions: c.upcomingRides ? ["My upcoming rides"] : ["Find a ride"],
         escalate: true,
       };
