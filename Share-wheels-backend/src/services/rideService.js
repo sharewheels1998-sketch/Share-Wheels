@@ -1080,6 +1080,75 @@ const getMyRequests = async (user) => {
   };
 };
 
+const deleteMyPassengerRequest = async (user, requestId) => {
+  if (!mongoose.Types.ObjectId.isValid(requestId)) {
+    return {
+      status: 400,
+      body: { success: false, message: "Invalid request id" },
+    };
+  }
+
+  const userId = new mongoose.Types.ObjectId(user._id);
+  const doc = await PassengerRide.findOne({
+    _id: requestId,
+    creator: userId,
+    status: "pending",
+    $or: [{ assigned_to: { $exists: false } }, { "assigned_to.rideId": null }],
+  });
+
+  if (!doc) {
+    return {
+      status: 404,
+      body: {
+        success: false,
+        message: "Request not found or cannot be deleted (only pending open requests)",
+      },
+    };
+  }
+
+  await PassengerRide.deleteOne({ _id: doc._id });
+  return {
+    status: 200,
+    body: { success: true, message: "Passenger request deleted" },
+  };
+};
+
+const deleteMyCourierRequest = async (user, requestId) => {
+  if (!mongoose.Types.ObjectId.isValid(requestId)) {
+    return {
+      status: 400,
+      body: { success: false, message: "Invalid request id" },
+    };
+  }
+
+  const userId = new mongoose.Types.ObjectId(user._id);
+  const doc = await Courier.findOne({
+    _id: requestId,
+    creator: userId,
+    courier_status: { $in: ["pending", "request_to_driver"] },
+    $or: [
+      { driver_assigned_courier: { $exists: false } },
+      { "driver_assigned_courier.rideId": null },
+    ],
+  });
+
+  if (!doc) {
+    return {
+      status: 404,
+      body: {
+        success: false,
+        message: "Request not found or cannot be deleted (only pending open requests)",
+      },
+    };
+  }
+
+  await Courier.deleteOne({ _id: doc._id });
+  return {
+    status: 200,
+    body: { success: true, message: "Courier request deleted" },
+  };
+};
+
 module.exports = {
   getRidesData,
   createRide,
@@ -1092,4 +1161,6 @@ module.exports = {
   getMyRequests,
   getMyPassengerRequests,
   getMyCourierRequests,
+  deleteMyPassengerRequest,
+  deleteMyCourierRequest,
 };

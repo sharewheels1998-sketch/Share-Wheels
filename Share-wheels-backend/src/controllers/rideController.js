@@ -29,4 +29,12 @@ module.exports = {
     handle(res, () => rideService.getMyPassengerRequests(req.user)),
   myCourierRequests: async (req, res) =>
     handle(res, () => rideService.getMyCourierRequests(req.user)),
+  deleteMyPassengerRequest: async (req, res) =>
+    handle(res, () =>
+      rideService.deleteMyPassengerRequest(req.user, req.params.requestId)
+    ),
+  deleteMyCourierRequest: async (req, res) =>
+    handle(res, () =>
+      rideService.deleteMyCourierRequest(req.user, req.params.requestId)
+    ),
 };

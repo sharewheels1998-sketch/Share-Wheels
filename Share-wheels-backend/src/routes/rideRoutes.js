@@ -16,6 +16,16 @@ router.get("/ride-details/:rideId", authMiddleware, rideController.rideDetails);
 router.get("/my-requests", authMiddleware, rideController.myRequests);
 router.get("/my-passenger-requests", authMiddleware, rideController.myPassengerRequests);
 router.get("/my-courier-requests", authMiddleware, rideController.myCourierRequests);
+router.delete(
+  "/my-passenger-requests/:requestId",
+  authMiddleware,
+  rideController.deleteMyPassengerRequest
+);
+router.delete(
+  "/my-courier-requests/:requestId",
+  authMiddleware,
+  rideController.deleteMyCourierRequest
+);
 
 router.use("/:rideId/chat", rideChatRoutes);
 
