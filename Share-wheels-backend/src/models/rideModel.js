@@ -4,6 +4,7 @@ const {
   rideAmountField,
   vehicleOnRideSchema,
   passengerOnRideSchema,
+  droputPassengerSchema,
   passengerRequestOnRideSchema,
   courierOnRideSchema,
   liveTrackingSchema,
@@ -35,7 +36,7 @@ const rideSchema = new mongoose.Schema(
     all_deliveries: [courierOnRideSchema],
     passenger_requested_ride: [passengerRequestOnRideSchema],
     passengers: [passengerOnRideSchema],
-    droput_Passengers: [passengerOnRideSchema],
+    droput_Passengers: [droputPassengerSchema],
     status: {
       type: String,
       enum: ["pending", "started", "completed", "cancelled", "expired"],

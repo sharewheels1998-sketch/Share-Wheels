@@ -23,12 +23,11 @@ export const courierCountsTowardEarnings = (c) =>
   !!c?.isBoardingVerified &&
   (c?.status || "").toLowerCase() === TRIP_STATUS.DELIVERED;
 
-export const canDropPassenger = (p, rideStarted) =>
-  rideStarted &&
+/** After OTP verify (picked_up) — show Drop / Delivered (ride must be started to complete action). */
+export const canDropPassenger = (p) =>
   !!p?.isBoardingVerified &&
   (p?.status || "").toLowerCase() === TRIP_STATUS.PICKED_UP;
 
-export const canDeliverCourier = (c, rideStarted) =>
-  rideStarted &&
+export const canDeliverCourier = (c) =>
   !!c?.isBoardingVerified &&
   (c?.status || "").toLowerCase() === TRIP_STATUS.PICKED_UP;

@@ -24,6 +24,10 @@ const {
 } = require("../utils/rideScheduleUtils");
 const { expireRide, expirePendingRideIfStale } = require("./rideExpiryService");
 const {
+  rejectIfPassengerJoiningAsCourier,
+  rejectIfCourierJoiningAsPassenger,
+} = require("../utils/rideParticipantRules");
+const {
   escapeRegex,
   getRideDayBounds,
   passengerOverlapsRideDay,
@@ -51,6 +55,10 @@ const acceptPassengerRequest = async (user, { rideId, passenger_userId }) => {
   if (ride.creator.toString() !== user._id.toString()) return { status: 403, body: { message: "Only ride creator can accept requests" } };
   const reqObj = ride.passenger_requested_ride.find((item) => item.userId.toString() === passenger_userId.toString());
   if (!reqObj) return { status: 404, body: { message: "Passenger request not found" } };
+  const courierConflict = rejectIfCourierJoiningAsPassenger(ride, passenger_userId);
+  if (courierConflict.blocked) {
+    return { status: 400, body: { message: courierConflict.message } };
+  }
   const seatsNeeded = Number(reqObj.requires_seats) || 1;
   if (seatsNeeded > ride.availableSeats) {
     return {
@@ -375,6 +383,10 @@ const pickCourier = async (user, { rideId, courierId }) => {
   const courier = await Courier.findById(courierId);
   if (!courier) return { status: 404, body: { success: false, message: "Courier not found" } };
   if (courier.courier_status !== "pending" && courier.courier_status !== "request_to_driver") return { status: 400, body: { success: false, message: "Courier already assigned or completed" } };
+  const passengerConflict = rejectIfPassengerJoiningAsCourier(ride, courier.creator);
+  if (passengerConflict.blocked) {
+    return { status: 400, body: { success: false, message: passengerConflict.message } };
+  }
   courier.driver_assigned_courier = { userId: user.id, rideId };
   courier.courier_status = "driver_assigned";
   await courier.save();

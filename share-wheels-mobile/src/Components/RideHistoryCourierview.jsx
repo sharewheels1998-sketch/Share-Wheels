@@ -20,133 +20,6 @@ import { getCourierFare } from "../Utils/fareUtils";
 import { formatDisplayTime } from "../Utils/dateUtils";
 import { useThemedStyles } from "../theme/useThemedStyles";
 
-const RideHistoryCourierview = ({ ride, loading }) => {
-  const styles = useThemedStyles(createStyles);
-  if (!ride) return null;
-
-  const formattedDate =
-    ride.formattedDate ||
-    (ride.date ? new Date(ride.date).toLocaleDateString() : null);
-  const formattedTime =
-    ride.formattedTime || formatDisplayTime(ride.startTime) || null;
-
-  return (
-    <View style={styles.container}>
-      <View style={styles.header}>
-        <View>
-          <Text style={styles.headerTitle}>Ride Details</Text>
-          <Text style={styles.headerSub}>Courier</Text>
-        </View>
-        {ride?.status ? (
-          <View style={styles.rolePill}>
-            <Text style={styles.rolePillText}>{ride.status}</Text>
-          </View>
-        ) : null}
-      </View>
-
-      {loading ? (
-        <ActivityIndicator style={{ marginTop: 24 }} color="#2563EB" />
-      ) : (
-      <View style={styles.scrollContent}>
-        {/* ROUTE */}
-        <View style={styles.routeCard}>
-          <View style={styles.routeItem}>
-            <Image source={madhapurIcon} style={styles.routeIcon} />
-            <View>
-              <Text style={styles.place}>{ride.from}</Text>
-              <Text style={styles.address}>Pickup Location</Text>
-            </View>
-          </View>
-
-          <View style={styles.routeLine} />
-
-          <View style={styles.routeItem}>
-            <Image source={kondapurIcon} style={styles.routeIcon} />
-            <View>
-              <Text style={styles.place}>{ride.to}</Text>
-              <Text style={styles.address}>Drop Location</Text>
-            </View>
-          </View>
-        </View>
-
-        {(formattedDate || formattedTime) && (
-          <View style={styles.infoGrid}>
-            {formattedDate ? (
-              <InfoCard
-                icon={dateIcon}
-                label="Date"
-                value={formattedDate}
-                bg="#ECFEFF"
-              />
-            ) : null}
-            {formattedTime ? (
-              <InfoCard
-                icon={clock}
-                label="Start Time"
-                value={formattedTime}
-                bg="#EFF6FF"
-              />
-            ) : null}
-          </View>
-        )}
-
-        {ride?.activeData || ride?.courierSnapshot ? (
-          <>
-            <Text style={styles.sectionTitle}>Your Parcel</Text>
-            <View style={styles.driverCard}>
-              <CourierParcelPreview
-                courier={ride.activeData || ride.courierSnapshot}
-              />
-            </View>
-          </>
-        ) : null}
-
-        <Text style={styles.sectionTitle}>Driver & Vehicle</Text>
-
-        <View style={styles.driverCard}>
-          <UserAvatar user={ride?.creator} size={52} />
-
-          <View style={{ flex: 1, marginLeft: 12 }}>
-            <Text style={styles.driverName}>
-              {ride?.creator?.name?.trim() || "Driver"}
-            </Text>
-            <Text style={styles.driverRole}>Driver</Text>
-            {ride?.creator?.mobile ? (
-              <Text style={styles.driverMeta}>{ride.creator.mobile}</Text>
-            ) : null}
-          </View>
-        </View>
-
-        {ride?.vehicle ? (
-          <VehicleInfoStrip vehicle={ride.vehicle} />
-        ) : null}
-
-        <LinearGradient colors={["#1D4ED8", "#2563EB"]} style={styles.totalCard}>
-          <View>
-            <Text style={styles.totalLabel}>Total Fare</Text>
-            <Text style={styles.totalAmount}>₹{getCourierFare(ride)}</Text>
-          </View>
-        </LinearGradient>
-      </View>
-      )}
-    </View>
-  );
-};
-
-/* INFO CARD */
-const InfoCard = ({ icon, label, value, bg }) => (
-  <View style={[styles.infoCard, { backgroundColor: bg }]}>
-    <View style={styles.infoRow}>
-      <Image source={icon} style={styles.infoIcon} />
-      <Text style={styles.infoLabel}>{label}</Text>
-    </View>
-    <Text style={styles.infoValue}>{value}</Text>
-  </View>
-);
-
-export default RideHistoryCourierview;
-
-/* STYLES */
 const createStyles = (c) =>
   StyleSheet.create({
   container: {
@@ -342,3 +215,131 @@ const createStyles = (c) =>
     marginTop: 4,
   },
 });
+
+const InfoCard = ({ icon, label, value, bg }) => {
+  const styles = useThemedStyles(createStyles);
+  return (
+    <View style={[styles.infoCard, { backgroundColor: bg }]}>
+      <View style={styles.infoRow}>
+        <Image source={icon} style={styles.infoIcon} />
+        <Text style={styles.infoLabel}>{label}</Text>
+      </View>
+      <Text style={styles.infoValue}>{value}</Text>
+    </View>
+  );
+};
+
+const RideHistoryCourierview = ({ ride, loading }) => {
+  const styles = useThemedStyles(createStyles);
+  if (!ride) return null;
+
+  const formattedDate =
+    ride.formattedDate ||
+    (ride.date ? new Date(ride.date).toLocaleDateString() : null);
+  const formattedTime =
+    ride.formattedTime || formatDisplayTime(ride.startTime) || null;
+
+  return (
+    <View style={styles.container}>
+      <View style={styles.header}>
+        <View>
+          <Text style={styles.headerTitle}>Ride Details</Text>
+          <Text style={styles.headerSub}>Courier</Text>
+        </View>
+        {ride?.status ? (
+          <View style={styles.rolePill}>
+            <Text style={styles.rolePillText}>{ride.status}</Text>
+          </View>
+        ) : null}
+      </View>
+
+      {loading ? (
+        <ActivityIndicator style={{ marginTop: 24 }} color="#2563EB" />
+      ) : (
+      <View style={styles.scrollContent}>
+        {/* ROUTE */}
+        <View style={styles.routeCard}>
+          <View style={styles.routeItem}>
+            <Image source={madhapurIcon} style={styles.routeIcon} />
+            <View>
+              <Text style={styles.place}>{ride.from}</Text>
+              <Text style={styles.address}>Pickup Location</Text>
+            </View>
+          </View>
+
+          <View style={styles.routeLine} />
+
+          <View style={styles.routeItem}>
+            <Image source={kondapurIcon} style={styles.routeIcon} />
+            <View>
+              <Text style={styles.place}>{ride.to}</Text>
+              <Text style={styles.address}>Drop Location</Text>
+            </View>
+          </View>
+        </View>
+
+        {(formattedDate || formattedTime) && (
+          <View style={styles.infoGrid}>
+            {formattedDate ? (
+              <InfoCard
+                icon={dateIcon}
+                label="Date"
+                value={formattedDate}
+                bg="#ECFEFF"
+              />
+            ) : null}
+            {formattedTime ? (
+              <InfoCard
+                icon={clock}
+                label="Start Time"
+                value={formattedTime}
+                bg="#EFF6FF"
+              />
+            ) : null}
+          </View>
+        )}
+
+        {ride?.activeData || ride?.courierSnapshot ? (
+          <>
+            <Text style={styles.sectionTitle}>Your Parcel</Text>
+            <View style={styles.driverCard}>
+              <CourierParcelPreview
+                courier={ride.activeData || ride.courierSnapshot}
+              />
+            </View>
+          </>
+        ) : null}
+
+        <Text style={styles.sectionTitle}>Driver & Vehicle</Text>
+
+        <View style={styles.driverCard}>
+          <UserAvatar user={ride?.creator} size={52} />
+
+          <View style={{ flex: 1, marginLeft: 12 }}>
+            <Text style={styles.driverName}>
+              {ride?.creator?.name?.trim() || "Driver"}
+            </Text>
+            <Text style={styles.driverRole}>Driver</Text>
+            {ride?.creator?.mobile ? (
+              <Text style={styles.driverMeta}>{ride.creator.mobile}</Text>
+            ) : null}
+          </View>
+        </View>
+
+        {ride?.vehicle ? (
+          <VehicleInfoStrip vehicle={ride.vehicle} />
+        ) : null}
+
+        <LinearGradient colors={["#1D4ED8", "#2563EB"]} style={styles.totalCard}>
+          <View>
+            <Text style={styles.totalLabel}>Total Fare</Text>
+            <Text style={styles.totalAmount}>₹{getCourierFare(ride)}</Text>
+          </View>
+        </LinearGradient>
+      </View>
+      )}
+    </View>
+  );
+};
+
+export default RideHistoryCourierview;

@@ -74,6 +74,20 @@ const RideDetails = ({ navigation, route }) => {
   const isOwnRide =
     !!myUserId && !!ride?.creator && refUserId(ride.creator) === myUserId;
 
+  const userOnRideAsPassenger =
+    !!myUserId &&
+    ((ride?.passengers || []).some((p) => refUserId(p.userId) === myUserId) ||
+      (ride?.passenger_requested_ride || []).some(
+        (p) => refUserId(p.userId) === myUserId
+      ));
+
+  const userOnRideAsCourier =
+    !!myUserId &&
+    ((ride?.all_deliveries || []).some((c) => refUserId(c.userId) === myUserId) ||
+      (ride?.users_request_Couriers || []).some(
+        (c) => refUserId(c.userId) === myUserId
+      ));
+
   /* 🔹 ACCORDION */
   const [showPassenger, setShowPassenger] = useState(true);
   const [showCourier, setShowCourier] = useState(true);
@@ -192,6 +206,13 @@ const RideDetails = ({ navigation, route }) => {
       );
       return;
     }
+    if (userOnRideAsCourier) {
+      Alert.alert(
+        "Already a courier",
+        "You are already a courier on this ride. You cannot also book a passenger seat on the same trip."
+      );
+      return;
+    }
     try {
       const token = await AsyncStorage.getItem("token");
 
@@ -243,6 +264,13 @@ const RideDetails = ({ navigation, route }) => {
       Alert.alert(
         "Your ride",
         "You are the driver for this ride. Couriers cannot be added by the driver on the same trip."
+      );
+      return;
+    }
+    if (userOnRideAsPassenger) {
+      Alert.alert(
+        "Already a passenger",
+        "You are already a passenger on this ride. You cannot also join as a courier on the same trip."
       );
       return;
     }
@@ -454,7 +482,12 @@ const RideDetails = ({ navigation, route }) => {
         </TouchableOpacity>
 
         {showPassenger && (
-          <View style={styles.accordionContent}> 
+          <View style={styles.accordionContent}>
+            {userOnRideAsCourier ? (
+              <Text style={styles.roleConflictText}>
+                You are already a courier on this ride and cannot book a passenger seat on the same trip.
+              </Text>
+            ) : null}
             <View style={styles.seatBox}>
               <Image source={seatsicon} style={styles.courierIcon} />
               <TouchableOpacity onPress={decreaseSeats} disabled={seats <= 1}>
@@ -478,7 +511,7 @@ const RideDetails = ({ navigation, route }) => {
             <TouchableOpacity
               style={[styles.primaryBtn, booking && styles.primaryBtnDisabled]}
               onPress={handleBookPassenger}
-              disabled={booking || maxSeats < 1}
+              disabled={booking || maxSeats < 1 || userOnRideAsCourier}
             >
               <Text style={styles.btnText}>
                 {booking ? "Sending…" : "Book Passenger"}
@@ -500,6 +533,11 @@ const RideDetails = ({ navigation, route }) => {
 
         {showCourier && (
           <View style={styles.accordionContent}>
+            {userOnRideAsPassenger ? (
+              <Text style={styles.roleConflictText}>
+                You are already a passenger on this ride and cannot also book courier delivery on the same trip.
+              </Text>
+            ) : null}
 
             <TextInput
               placeholder="Courier type (e.g. document, parcel)"
@@ -569,7 +607,14 @@ const RideDetails = ({ navigation, route }) => {
               onChangeText={(v) => handleCourierChange("receiver_address", v)}
             />
 
-            <TouchableOpacity style={styles.primaryBtn}onPress={handleBookCourier}>
+            <TouchableOpacity
+              style={[
+                styles.primaryBtn,
+                userOnRideAsPassenger && styles.primaryBtnDisabled,
+              ]}
+              onPress={handleBookCourier}
+              disabled={userOnRideAsPassenger}
+            >
               <Text style={styles.btnText}>Book Courier</Text>
             </TouchableOpacity>
             
@@ -629,6 +674,12 @@ const createStyles = (c) =>
   infoText: { color: c.textSecondary },
   warningBox: { flexDirection: "row", backgroundColor: c.warningBg, marginHorizontal: 16, padding: 12, borderRadius: 12, alignItems: "center" },
   warningText: { flex: 1, marginLeft: 10, color: c.warningText },
+  roleConflictText: {
+    color: c.warningText,
+    marginBottom: 12,
+    fontWeight: "600",
+    lineHeight: 20,
+  },
   quickReserveBox: { backgroundColor: c.successBg },
   quickReserveText: { flex: 1, marginLeft: 10, color: c.successText, fontWeight: "600" },
   ownRideBox: { backgroundColor: c.infoBg },

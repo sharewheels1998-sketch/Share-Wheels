@@ -13,6 +13,7 @@ const {
   emitMyRequestsUpdated,
   emitEnrouteRequestRemoved,
 } = require("../utils/socketEmit");
+const { rejectIfCourierJoiningAsPassenger } = require("../utils/rideParticipantRules");
 
 const createPassengerRequest = async (user, { from, to, ride_need_date, seats_needed, date, luggage_included, amount_will }) => {
   if (!from || !to || !ride_need_date || !seats_needed) {
@@ -97,6 +98,10 @@ const pickPassenger = async (user, { passenger_rideId, rideId }) => {
   if (!ride) return { status: 404, body: { message: "Ride not found" } };
   if (ride.creator.toString() !== user._id.toString()) return { status: 403, body: { message: "Unauthorized" } };
   if (ride.availableSeats < passengerRide.seats_needed) return { status: 400, body: { success: false, message: "Not enough seats" } };
+  const courierConflict = rejectIfCourierJoiningAsPassenger(ride, passengerRide.creator);
+  if (courierConflict.blocked) {
+    return { status: 400, body: { message: courierConflict.message } };
+  }
 
   const passengerEntry = {
     userId: passengerRide.creator,

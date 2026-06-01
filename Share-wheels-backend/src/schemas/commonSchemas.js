@@ -71,6 +71,22 @@ const passengerOnRideSchema = new mongoose.Schema(
   { _id: true }
 );
 
+/** Passenger removed or rejected from a Ride (history on droput_Passengers) */
+const droputPassengerSchema = new mongoose.Schema(
+  {
+    userId: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+    requires_seats: { type: Number, min: 1, default: 1 },
+    ride_amount: rideAmountField,
+    status: {
+      type: String,
+      enum: ["rejected", "removed", "cancelled", "dropped"],
+      default: "removed",
+    },
+    joinedAt: { type: Date, default: Date.now },
+  },
+  { _id: true }
+);
+
 /** Pending passenger seat request on a Ride */
 const passengerRequestOnRideSchema = new mongoose.Schema(
   {
@@ -194,6 +210,7 @@ module.exports = {
   receiverDetailsSchema,
   courierDateSchema,
   passengerOnRideSchema,
+  droputPassengerSchema,
   passengerRequestOnRideSchema,
   courierOnRideSchema,
   vehicleOnRideSchema,

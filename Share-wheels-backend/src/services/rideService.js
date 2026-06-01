@@ -31,6 +31,7 @@ const {
 } = require("../utils/socketEmit");
 const { toEnrouteDateKey } = require("../utils/rideDateQueryUtils");
 const { expireStalePendingRides, expirePendingRideIfStale } = require("./rideExpiryService");
+const { rejectIfCourierJoiningAsPassenger } = require("../utils/rideParticipantRules");
 const { normalizeStartTimeForStorage } = require("../utils/rideScheduleUtils");
 
 const escapeRegex = (str) => String(str).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -436,6 +437,10 @@ const sendPassengerRequest = async (user, { rideId, requires_seats }) => {
   );
   if (alreadyPassenger) {
     return { status: 400, body: { success: false, message: "Already a passenger" } };
+  }
+  const courierConflict = rejectIfCourierJoiningAsPassenger(ride, userId);
+  if (courierConflict.blocked) {
+    return { status: 400, body: { success: false, message: courierConflict.message } };
   }
   if (seats > ride.availableSeats) {
     return {

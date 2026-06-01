@@ -21,146 +21,6 @@ import { getRideDisplayFare } from "../Utils/fareUtils";
 import { formatDisplayTime } from "../Utils/dateUtils";
 import { useThemedStyles } from "../theme/useThemedStyles";
 
-const RideHistoryPassengerView = ({ ride, loading }) => {
-  const styles = useThemedStyles(createStyles);
-  if (!ride) return null;
-
-  const formattedDate =
-    ride.formattedDate ||
-    (ride.date ? new Date(ride.date).toLocaleDateString() : "—");
-
-  const formattedTime =
-    ride.formattedTime || formatDisplayTime(ride.startTime) || "—";
-
-  const seats =
-    ride.requires_seats ||
-    ride.activeData?.requires_seats ||
-    ride.seats ||
-    1;
-  const totalFare = getRideDisplayFare(ride);
-
-  return (
-    <View style={styles.container}>
-      {/* HEADER */}
-      <View style={styles.header}>
-        <View>
-          <Text style={styles.headerTitle}>Ride Details</Text>
-          <Text style={styles.headerSub}>Passenger</Text>
-        </View>
-        {ride?.status ? (
-          <View style={styles.rolePill}>
-            <Text style={styles.rolePillText}>{ride.status}</Text>
-          </View>
-        ) : null}
-      </View>
-
-      {loading ? (
-        <ActivityIndicator style={{ marginTop: 24 }} />
-      ) : (
-      <View style={styles.scrollContent}>
-        {/* ROUTE */}
-        <View style={styles.routeCard}>
-          <View style={styles.routeItem}>
-            <Image source={madhapurIcon} style={styles.routeIcon} />
-            <View>
-              <Text style={styles.place}>{ride.from}</Text>
-              <Text style={styles.address}>Pickup Location</Text>
-            </View>
-          </View>
-
-          <View style={styles.routeLine} />
-
-          <View style={styles.routeItem}>
-            <Image source={kondapurIcon} style={styles.routeIcon} />
-            <View>
-              <Text style={styles.place}>{ride.to}</Text>
-              <Text style={styles.address}>Drop Location</Text>
-            </View>
-          </View>
-        </View>
-
-        {/* INFO CARDS */}
-        <View style={styles.infoGrid}>
-          <InfoCard
-            icon={car}
-            label="Car Type"
-            value={
-              [ride?.vehicle?.company, ride?.vehicle?.model, ride?.vehicle?.car_no]
-                .filter(Boolean)
-                .join(" · ") || "Car"
-            }
-            bg="#F3E8FF"
-          />
-
-          <InfoCard
-            icon={seat}
-            label="Seats"
-            value={String(seats)}
-            bg="#FFF7ED"
-          />
-
-          <InfoCard
-            icon={dateIcon}
-            label="Date"
-            value={formattedDate}
-            bg="#ECFEFF"
-          />
-
-          <InfoCard
-            icon={clock}
-            label="Start Time"
-            value={formattedTime}
-            bg="#EFF6FF"
-            full
-          />
-        </View>
-
-        {/* DRIVER & VEHICLE */}
-        <Text style={styles.sectionTitle}>Driver & Vehicle</Text>
-
-        <View style={styles.driverCard}>
-          <UserAvatar user={ride?.creator} size={52} />
-
-          <View style={{ flex: 1, marginLeft: 12 }}>
-            <Text style={styles.driverName}>
-              {ride?.creator?.name || "Driver"}
-            </Text>
-            <Text style={styles.driverRole}>Driver</Text>
-            {ride?.creator?.mobile ? (
-              <Text style={styles.driverMeta}>{ride.creator.mobile}</Text>
-            ) : null}
-          </View>
-        </View>
-
-        {ride?.vehicle ? (
-          <VehicleInfoStrip vehicle={ride.vehicle} />
-        ) : null}
-
-        <LinearGradient colors={["#1D4ED8", "#2563EB"]} style={styles.totalCard}>
-          <View>
-            <Text style={styles.totalLabel}>Total Fare</Text>
-            <Text style={styles.totalAmount}>₹{totalFare}</Text>
-          </View>
-        </LinearGradient>
-      </View>
-      )}
-    </View>
-  );
-};
-
-/* INFO CARD */
-const InfoCard = ({ icon, label, value, bg, full }) => (
-  <View style={[styles.infoCard, { backgroundColor: bg }, full && styles.full]}>
-    <View style={styles.infoRow}>
-      <Image source={icon} style={styles.infoIcon} />
-      <Text style={styles.infoLabel}>{label}</Text>
-    </View>
-    <Text style={styles.infoValue}>{value}</Text>
-  </View>
-);
-
-export default RideHistoryPassengerView;
-
 const createStyles = (c) =>
   StyleSheet.create({
   container: {
@@ -360,3 +220,145 @@ const createStyles = (c) =>
     marginTop: 4,
   },
 });
+
+const InfoCard = ({ icon, label, value, bg, full }) => {
+  const styles = useThemedStyles(createStyles);
+  return (
+    <View style={[styles.infoCard, { backgroundColor: bg }, full && styles.full]}>
+      <View style={styles.infoRow}>
+        <Image source={icon} style={styles.infoIcon} />
+        <Text style={styles.infoLabel}>{label}</Text>
+      </View>
+      <Text style={styles.infoValue}>{value}</Text>
+    </View>
+  );
+};
+
+const RideHistoryPassengerView = ({ ride, loading }) => {
+  const styles = useThemedStyles(createStyles);
+  if (!ride) return null;
+
+  const formattedDate =
+    ride.formattedDate ||
+    (ride.date ? new Date(ride.date).toLocaleDateString() : "—");
+
+  const formattedTime =
+    ride.formattedTime || formatDisplayTime(ride.startTime) || "—";
+
+  const seats =
+    ride.requires_seats ||
+    ride.activeData?.requires_seats ||
+    ride.seats ||
+    1;
+  const totalFare = getRideDisplayFare(ride);
+
+  return (
+    <View style={styles.container}>
+      {/* HEADER */}
+      <View style={styles.header}>
+        <View>
+          <Text style={styles.headerTitle}>Ride Details</Text>
+          <Text style={styles.headerSub}>Passenger</Text>
+        </View>
+        {ride?.status ? (
+          <View style={styles.rolePill}>
+            <Text style={styles.rolePillText}>{ride.status}</Text>
+          </View>
+        ) : null}
+      </View>
+
+      {loading ? (
+        <ActivityIndicator style={{ marginTop: 24 }} />
+      ) : (
+      <View style={styles.scrollContent}>
+        {/* ROUTE */}
+        <View style={styles.routeCard}>
+          <View style={styles.routeItem}>
+            <Image source={madhapurIcon} style={styles.routeIcon} />
+            <View>
+              <Text style={styles.place}>{ride.from}</Text>
+              <Text style={styles.address}>Pickup Location</Text>
+            </View>
+          </View>
+
+          <View style={styles.routeLine} />
+
+          <View style={styles.routeItem}>
+            <Image source={kondapurIcon} style={styles.routeIcon} />
+            <View>
+              <Text style={styles.place}>{ride.to}</Text>
+              <Text style={styles.address}>Drop Location</Text>
+            </View>
+          </View>
+        </View>
+
+        {/* INFO CARDS */}
+        <View style={styles.infoGrid}>
+          <InfoCard
+            icon={car}
+            label="Car Type"
+            value={
+              [ride?.vehicle?.company, ride?.vehicle?.model, ride?.vehicle?.car_no]
+                .filter(Boolean)
+                .join(" · ") || "Car"
+            }
+            bg="#F3E8FF"
+          />
+
+          <InfoCard
+            icon={seat}
+            label="Seats"
+            value={String(seats)}
+            bg="#FFF7ED"
+          />
+
+          <InfoCard
+            icon={dateIcon}
+            label="Date"
+            value={formattedDate}
+            bg="#ECFEFF"
+          />
+
+          <InfoCard
+            icon={clock}
+            label="Start Time"
+            value={formattedTime}
+            bg="#EFF6FF"
+            full
+          />
+        </View>
+
+        {/* DRIVER & VEHICLE */}
+        <Text style={styles.sectionTitle}>Driver & Vehicle</Text>
+
+        <View style={styles.driverCard}>
+          <UserAvatar user={ride?.creator} size={52} />
+
+          <View style={{ flex: 1, marginLeft: 12 }}>
+            <Text style={styles.driverName}>
+              {ride?.creator?.name || "Driver"}
+            </Text>
+            <Text style={styles.driverRole}>Driver</Text>
+            {ride?.creator?.mobile ? (
+              <Text style={styles.driverMeta}>{ride.creator.mobile}</Text>
+            ) : null}
+          </View>
+        </View>
+
+        {ride?.vehicle ? (
+          <VehicleInfoStrip vehicle={ride.vehicle} />
+        ) : null}
+
+        <LinearGradient colors={["#1D4ED8", "#2563EB"]} style={styles.totalCard}>
+          <View>
+            <Text style={styles.totalLabel}>Total Fare</Text>
+            <Text style={styles.totalAmount}>₹{totalFare}</Text>
+          </View>
+        </LinearGradient>
+      </View>
+      )}
+    </View>
+  );
+};
+
+export default RideHistoryPassengerView;

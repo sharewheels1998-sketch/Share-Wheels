@@ -1,236 +1,340 @@
-import React, { useRef, useEffect, useState } from "react";
+import React, { useEffect, useState, useMemo, useRef } from "react";
 import {
   View,
   StyleSheet,
-  Animated,
-  PanResponder,
   Dimensions,
   ScrollView,
   Pressable,
+  KeyboardAvoidingView,
+  Platform,
+  Text,
 } from "react-native";
 import LinearGradient from "react-native-linear-gradient";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import Animated, {
+  useSharedValue,
+  useAnimatedStyle,
+  withSpring,
+  withTiming,
+  runOnJS,
+  interpolate,
+  Extrapolation,
+} from "react-native-reanimated";
+import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import { useTheme } from "../context/ThemeContext";
 
 const SCREEN_HEIGHT = Dimensions.get("window").height;
+const SHEET_RADIUS = 28;
+
+const SPRING_OPEN = {
+  damping: 20,
+  stiffness: 300,
+  mass: 0.8,
+};
+
+const SPRING_SNAP = {
+  damping: 22,
+  stiffness: 340,
+  mass: 0.72,
+};
+
 const getDefaultTheme = (c, isDark) => ({
   backdropColor: "#000",
-  backdropOpacity: isDark ? 0.65 : 0.42,
-  gradient: [c.sliderPanel, c.surfaceAlt, c.background],
+  backdropOpacity: isDark ? 0.55 : 0.45,
+  gradient: [c.sliderPanel, c.surface, c.background],
   borderColor: c.border,
   handleColor: c.textMuted,
-  closeColor: c.textSecondary,
 });
 
 const BottomSlider = ({
   visible,
   onClose,
   children,
-  height = 500,
+  dragHeader = null,
   scrollable = true,
+  solid = false,
+  heightRatio = 0.75,
+  dismissOnBackdropPress = true,
   theme = {},
 }) => {
   const { colors, isDark } = useTheme();
-  const translateY = useRef(new Animated.Value(SCREEN_HEIGHT)).current;
-  const dragY = useRef(new Animated.Value(0)).current;
-  const backdropOpacity = useRef(new Animated.Value(0)).current;
+  const insets = useSafeAreaInsets();
   const mergedTheme = { ...getDefaultTheme(colors, isDark), ...theme };
   const [mounted, setMounted] = useState(visible);
   const onCloseRef = useRef(onClose);
   const wasOpenRef = useRef(visible);
-  const aliveRef = useRef(true);
+
+  const sheetHeight = useMemo(
+    () => SCREEN_HEIGHT * Math.min(Math.max(heightRatio, 0.38), 0.82),
+    [heightRatio]
+  );
+
+  const translateY = useSharedValue(sheetHeight);
+  const dragStartY = useSharedValue(0);
 
   useEffect(() => {
     onCloseRef.current = onClose;
   }, [onClose]);
 
-  useEffect(() => {
-    aliveRef.current = true;
-    return () => {
-      aliveRef.current = false;
-    };
-  }, []);
+  const finishClose = () => {
+    setMounted(false);
+  };
+
+  const requestClose = () => {
+    onCloseRef.current?.();
+  };
 
   useEffect(() => {
-    let animation;
-
     if (visible) {
       wasOpenRef.current = true;
       setMounted(true);
-      translateY.setValue(SCREEN_HEIGHT);
-      animation = Animated.parallel([
-        Animated.spring(translateY, {
-          toValue: 0,
-          damping: 20,
-          stiffness: 140,
-          useNativeDriver: true,
-        }),
-        Animated.timing(backdropOpacity, {
-          toValue: mergedTheme.backdropOpacity,
-          duration: 250,
-          useNativeDriver: true,
-        }),
-      ]);
-      animation.start();
-    } else if (wasOpenRef.current) {
-      wasOpenRef.current = false;
-      animation = Animated.parallel([
-        Animated.timing(translateY, {
-          toValue: SCREEN_HEIGHT,
-          duration: 220,
-          useNativeDriver: true,
-        }),
-        Animated.timing(backdropOpacity, {
-          toValue: 0,
-          duration: 200,
-          useNativeDriver: true,
-        }),
-      ]);
-      animation.start(({ finished }) => {
-        if (finished && aliveRef.current) {
-          dragY.setValue(0);
-          setMounted(false);
-        }
-      });
+      translateY.value = sheetHeight;
+      translateY.value = withSpring(0, SPRING_OPEN);
+      return;
     }
 
-    return () => {
-      animation?.stop?.();
-    };
-  }, [visible, mergedTheme.backdropOpacity, translateY, dragY, backdropOpacity]);
-
-  useEffect(() => {
-    return () => {
-      translateY.stopAnimation();
-      dragY.stopAnimation();
-      backdropOpacity.stopAnimation();
-    };
-  }, [translateY, dragY, backdropOpacity]);
-
-  const panResponder = useRef(
-    PanResponder.create({
-      onMoveShouldSetPanResponder: (_, g) => g.dy > 5,
-
-      onPanResponderMove: (_, g) => {
-        if (g.dy > 0) dragY.setValue(g.dy);
-      },
-
-      onPanResponderRelease: (_, g) => {
-        if (g.dy > 120) {
-          Animated.timing(translateY, {
-            toValue: SCREEN_HEIGHT,
-            duration: 200,
-            useNativeDriver: true,
-          }).start(() => {
-            dragY.setValue(0);
-            onCloseRef.current?.();
-          });
-        } else {
-          Animated.spring(dragY, {
-            toValue: 0,
-            damping: 15,
-            stiffness: 150,
-            useNativeDriver: true,
-          }).start();
+    if (wasOpenRef.current) {
+      wasOpenRef.current = false;
+      translateY.value = withTiming(
+        sheetHeight,
+        { duration: 240 },
+        (finished) => {
+          if (finished) {
+            runOnJS(finishClose)();
+          }
         }
-      },
-    })
-  ).current;
+      );
+    }
+  }, [visible, sheetHeight, translateY]);
+
+  const panGesture = useMemo(
+    () =>
+      Gesture.Pan()
+        .activeOffsetY(6)
+        .failOffsetX([-24, 24])
+        .onStart(() => {
+          dragStartY.value = translateY.value;
+        })
+        .onUpdate((event) => {
+          const next = dragStartY.value + event.translationY;
+          translateY.value = Math.max(0, Math.min(next, sheetHeight));
+        })
+        .onEnd((event) => {
+          const shouldClose =
+            translateY.value > sheetHeight * 0.22 || event.velocityY > 650;
+
+          if (shouldClose) {
+            translateY.value = withTiming(
+              sheetHeight,
+              { duration: 220 },
+              (finished) => {
+                if (finished) {
+                  runOnJS(requestClose)();
+                }
+              }
+            );
+          } else {
+            translateY.value = withSpring(0, SPRING_SNAP);
+          }
+        }),
+    [sheetHeight, translateY, dragStartY]
+  );
+
+  const sheetAnimatedStyle = useAnimatedStyle(() => ({
+    transform: [{ translateY: translateY.value }],
+  }));
+
+  const backdropAnimatedStyle = useAnimatedStyle(() => ({
+    opacity: interpolate(
+      translateY.value,
+      [0, sheetHeight],
+      [mergedTheme.backdropOpacity, 0],
+      Extrapolation.CLAMP
+    ),
+  }));
+
+  const topDismissAnimatedStyle = useAnimatedStyle(() => ({
+    height: Math.max(0, SCREEN_HEIGHT - sheetHeight + translateY.value),
+  }));
 
   if (!mounted) return null;
 
+  const surfaceStyle = [
+    styles.sliderSurface,
+    { paddingBottom: Math.max(insets.bottom, 12) },
+    solid && { backgroundColor: colors.surface },
+  ];
+
+  const body = scrollable ? (
+    <ScrollView
+      showsVerticalScrollIndicator={false}
+      nestedScrollEnabled
+      keyboardShouldPersistTaps="handled"
+      contentContainerStyle={styles.scrollContent}
+    >
+      {children}
+    </ScrollView>
+  ) : (
+    <View style={styles.bodyFill}>{children}</View>
+  );
+
+  const sheetBorderColor = mergedTheme.borderColor;
+  const sheetBg = solid ? colors.surface : colors.sliderPanel;
+
   return (
-    <>
-      <Pressable style={StyleSheet.absoluteFill} onPress={() => onCloseRef.current?.()}>
-        <Animated.View
-          style={[
-            styles.backdrop,
-            { opacity: backdropOpacity, backgroundColor: mergedTheme.backdropColor },
-          ]}
-        />
-      </Pressable>
+    <View style={styles.portal} pointerEvents="box-none">
+      <Animated.View
+        pointerEvents="none"
+        style={[
+          styles.backdrop,
+          backdropAnimatedStyle,
+          { backgroundColor: mergedTheme.backdropColor },
+        ]}
+      />
+
+      {dismissOnBackdropPress ? (
+        <Animated.View style={[styles.topDismiss, topDismissAnimatedStyle]}>
+          <Pressable
+            style={StyleSheet.absoluteFill}
+            onPress={requestClose}
+            accessibilityLabel="Close"
+            accessibilityRole="button"
+          />
+        </Animated.View>
+      ) : null}
 
       <Animated.View
         style={[
-          styles.slider,
+          styles.sheetShell,
           {
-            borderTopColor: mergedTheme.borderColor,
+            height: sheetHeight,
             shadowColor: colors.shadow,
           },
-          {
-            transform: [{ translateY: Animated.add(translateY, dragY) }],
-          },
+          sheetAnimatedStyle,
         ]}
       >
-        <View {...panResponder.panHandlers} style={styles.dragArea}>
-          <View style={[styles.dragHandle, { backgroundColor: mergedTheme.handleColor }]} />
-        </View>
-
-        <LinearGradient
-          colors={mergedTheme.gradient}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 1 }}
-          style={styles.sliderSurface}
+        <View
+          style={[
+            styles.sheetFrame,
+            {
+              backgroundColor: sheetBg,
+              borderColor: sheetBorderColor,
+            },
+          ]}
         >
-          {scrollable ? (
-            <ScrollView
-              showsVerticalScrollIndicator={false}
-              nestedScrollEnabled
-              contentContainerStyle={styles.scrollContent}
-            >
-              {children}
-            </ScrollView>
-          ) : (
-            children
-          )}
-        </LinearGradient>
+          <GestureDetector gesture={panGesture}>
+            <View style={[styles.dragChrome, { borderBottomColor: sheetBorderColor }]}>
+              <View style={styles.handleTrack}>
+                <View
+                  style={[
+                    styles.dragHandle,
+                    { backgroundColor: mergedTheme.handleColor },
+                  ]}
+                />
+              </View>
+              {!dragHeader ? (
+                <Text style={[styles.dragHint, { color: colors.textMuted }]}>
+                  Drag down to close
+                </Text>
+              ) : null}
+              {dragHeader}
+            </View>
+          </GestureDetector>
+
+          <KeyboardAvoidingView
+            style={styles.keyboardAvoid}
+            behavior={Platform.OS === "ios" ? "padding" : undefined}
+          >
+            {solid ? (
+              <View style={surfaceStyle}>{body}</View>
+            ) : (
+              <LinearGradient
+                colors={mergedTheme.gradient}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 0, y: 1 }}
+                style={surfaceStyle}
+              >
+                {body}
+              </LinearGradient>
+            )}
+          </KeyboardAvoidingView>
+        </View>
       </Animated.View>
-    </>
+    </View>
   );
 };
 
 export default BottomSlider;
 
 const styles = StyleSheet.create({
+  portal: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 1000,
+    elevation: 16,
+  },
   backdrop: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: "#000",
   },
-  slider: {
+  topDismiss: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 1001,
+  },
+  sheetShell: {
     position: "absolute",
     bottom: 0,
     left: 0,
     right: 0,
-    height: SCREEN_HEIGHT * 0.75,
-    borderTopWidth: 1.2,
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    paddingHorizontal: 0,
-    paddingTop: 8,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: -4 },
-    shadowOpacity: 0.15,
-    shadowRadius: 8,
-    zIndex:1000,
-    elevation: 12,
+    zIndex: 1002,
+    paddingHorizontal: 10,
+    paddingBottom: 0,
+  },
+  sheetFrame: {
+    flex: 1,
+    borderTopLeftRadius: SHEET_RADIUS,
+    borderTopRightRadius: SHEET_RADIUS,
+    borderWidth: 1,
+    borderBottomWidth: 0,
+    overflow: "hidden",
+    elevation: 28,
+    shadowOffset: { width: 0, height: -10 },
+    shadowOpacity: 0.22,
+    shadowRadius: 24,
+  },
+  dragChrome: {
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    paddingBottom: 4,
+  },
+  handleTrack: {
+    alignItems: "center",
+    paddingTop: 12,
+    paddingBottom: 6,
+  },
+  dragHandle: {
+    width: 48,
+    height: 5,
+    borderRadius: 100,
+  },
+  dragHint: {
+    textAlign: "center",
+    fontSize: 11,
+    fontWeight: "600",
+    marginBottom: 8,
+    letterSpacing: 0.2,
+  },
+  keyboardAvoid: {
+    flex: 1,
   },
   sliderSurface: {
     flex: 1,
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    paddingHorizontal: 20,
-    paddingBottom: 10,
+    paddingHorizontal: 16,
   },
-  dragArea: {
-    paddingVertical: 10,
-    alignItems: "center",
-  },
-  dragHandle: {
-    width: 50,
-    height: 5,
-    backgroundColor: "#D0D0D0",
-    borderRadius: 3,
+  bodyFill: {
+    flex: 1,
   },
   scrollContent: {
-    paddingBottom: 24,
+    paddingBottom: 16,
   },
 });

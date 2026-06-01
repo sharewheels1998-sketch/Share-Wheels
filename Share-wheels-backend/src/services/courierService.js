@@ -13,6 +13,10 @@ const {
 } = require("../utils/socketEmit");
 const { escapeRegex } = require("../utils/rideDateQueryUtils");
 const { expirePendingRideIfStale } = require("./rideExpiryService");
+const {
+  rejectIfPassengerJoiningAsCourier,
+  isUserCourierOnRide,
+} = require("../utils/rideParticipantRules");
 
 const parseCourierCalendarDate = (value) => {
   if (value == null || value === "") return null;
@@ -189,11 +193,13 @@ const requestCourier = async (user, body) => {
     return { status: 400, body: { success: false, message: "Valid amount_will is required" } };
   }
 
-  const alreadyCourier = ride.all_deliveries?.some(
-    (c) => c.userId?.toString() === user._id.toString()
-  );
-  if (alreadyCourier) {
+  if (isUserCourierOnRide(ride, user._id)) {
     return { status: 400, body: { success: false, message: "Already a courier on this ride" } };
+  }
+
+  const passengerConflict = rejectIfPassengerJoiningAsCourier(ride, user._id);
+  if (passengerConflict.blocked) {
+    return { status: 400, body: { success: false, message: passengerConflict.message } };
   }
 
   const courierData = {
@@ -331,13 +337,19 @@ const acceptCourier = async (user, { rideId, courierId }) => {
   if (!mongoose.Types.ObjectId.isValid(rideId) || !mongoose.Types.ObjectId.isValid(courierId)) {
     return { status: 400, body: { success: false, message: "Invalid rideId or courierId" } };
   }
-  const ride = await Ride.findOne(
-    { _id: rideId, "users_request_Couriers._id": new mongoose.Types.ObjectId(courierId) },
-    { creator: 1, from: 1, to: 1, "users_request_Couriers.$": 1 }
+  const ride = await Ride.findById(rideId).select(
+    "creator from to passengers passenger_requested_ride users_request_Couriers all_deliveries"
   );
-  if (!ride || ride.users_request_Couriers.length === 0) return { status: 404, body: { success: false, message: "Courier request not found" } };
+  if (!ride) return { status: 404, body: { success: false, message: "Ride not found" } };
+  const courierData = ride.users_request_Couriers?.find(
+    (c) => c._id.toString() === courierId.toString()
+  );
+  if (!courierData) return { status: 404, body: { success: false, message: "Courier request not found" } };
   if (ride.creator.toString() !== user._id.toString()) return { status: 403, body: { success: false, message: "Only driver can accept" } };
-  const courierData = ride.users_request_Couriers[0];
+  const passengerConflict = rejectIfPassengerJoiningAsCourier(ride, courierData.userId);
+  if (passengerConflict.blocked) {
+    return { status: 400, body: { success: false, message: passengerConflict.message } };
+  }
   const deliveryEntry = { ...courierData.toObject(), assignedAt: new Date() };
   await ensureParticipantBoardingOtp(deliveryEntry, deliveryEntry.userId, {
     rideId: ride._id,

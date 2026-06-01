@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect, useRef } from "react";
+import React, { useState, useCallback, useEffect, useRef, useMemo } from "react";
 import {
   View,
   Text,
@@ -11,9 +11,7 @@ import {
 } from "react-native";
 
 import BottomSlider from "../Components/BottomSlider";
-import OtpModel from "../Components/OtpModel";
 import EnRoute from "../Components/EnRoute";
-import RemovePassengerModal from "../Components/RemovePassenger";
 import FixedButton from "../Components/FixedButton";
 
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -47,7 +45,6 @@ import lineIcon from "../assets/lineicon.png";
 import UserAvatar from "../Components/ui/UserAvatar";
 import ScreenContainer from "../Components/ui/ScreenContainer";
 import ScreenHeader from "../Components/ui/ScreenHeader";
-import ParticipantCard from "../Components/ParticipantCard";
 import DriverParticipantPopover from "../Components/ui/DriverParticipantPopover";
 import {
   buildDriverPassengerDetail,
@@ -55,11 +52,21 @@ import {
 } from "../Utils/driverParticipantDetails";
 import DriverContactCard from "../Components/DriverContactCard";
 import VehicleInfoStrip from "../Components/VehicleInfoStrip";
-import CourierParcelPreview, {
-  formatCourierParcelLine,
-} from "../Components/CourierParcelPreview";
+import CourierParcelPreview from "../Components/CourierParcelPreview";
 import EditableRideSeats from "../Components/EditableRideSeats";
 import RideDriverSettings from "../Components/RideDriverSettings";
+import DriverParticipantsHub from "../Components/DriverParticipantsHub";
+import DriverParticipantsSheet, {
+  buildParticipantsDragHeader,
+  participantsSheetStyles,
+} from "../Components/ui/DriverParticipantsPopover";
+import VerifyBoardingPopover from "../Components/ui/VerifyBoardingPopover";
+import RemovePassengerPopover from "../Components/ui/RemovePassengerPopover";
+import {
+  getParticipantUserId,
+  getParticipantUserNo,
+} from "../Utils/participantIds";
+import VerifyBoardingPanel from "../Components/VerifyBoardingPanel";
 import MessageIndicator from "../Components/ui/MessageIndicator";
 import { getRideChatMessages } from "../ApiService/chatApiServices";
 import { profileData } from "../Navigation/AuthNavigator";
@@ -67,18 +74,13 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { LAYOUT, getScrollBottomPadding, scale } from "../theme/layout";
 import { useThemedStyles } from "../theme/useThemedStyles";
 import { useTheme } from "../context/ThemeContext";
-import caricon from "../assets/caricon.png";
 import courier from "../assets/courier.png"
 import { useRoute, useNavigation } from "@react-navigation/native";
 import { convertDate } from '../Utils';
 import { formatDisplayTime } from '../Utils/dateUtils';
 import { formatLocalISODate } from "../Utils/dateUtils";
 import { getRideDisplayFare, getPassengerFare, getCourierFare } from '../Utils/fareUtils';
-import {
-  canDropPassenger,
-  canDeliverCourier,
-  tripStatusLabel,
-} from "../Utils/participantTripStatus";
+import { tripStatusLabel } from "../Utils/participantTripStatus";
 import { NOTIFICATIONS_REFRESH_EVENT } from "../context/NotificationsContext";
 import { useFocusEffect } from '@react-navigation/native';
 import { ActivityIndicator } from "react-native";
@@ -104,8 +106,9 @@ const UpcomingDetailsPage = ({ route }) => {
   const insets = useSafeAreaInsets();
   const { colors } = useTheme();
   const styles = useThemedStyles(createStyles);
+  const participantSheetStyles = useThemedStyles(participantsSheetStyles);
   const { rideData } = route.params || {};
-  const { setRefreshUpcomingrides } = profileData() || {};
+  const { setRefreshUpcomingrides, ProfileDetails } = profileData() || {};
 
   const refreshUpcomingList = useCallback(() => {
     setRefreshUpcomingrides?.((prev) => !prev);
@@ -120,13 +123,13 @@ const UpcomingDetailsPage = ({ route }) => {
   const isCourier = role === "courier";
 
   const [activeSlider, setActiveSlider] = useState(null);
+  const [participantTabIndex, setParticipantTabIndex] = useState(0);
   const [loadingRide, setLoadingRide] = useState(false);
   const [rideActionLoading, setRideActionLoading] = useState(false);
   const [rideStarted, setRideStarted] = useState(
     rideData?.status === "started" || rideData?.ride_status === "started"
   );
   const [passengers, setPassengers] = useState([]);
-  const [selectedPassenger, setSelectedPassenger] = useState(null);
   const [participantPopoverVisible, setParticipantPopoverVisible] = useState(false);
   const [participantPopoverLoading, setParticipantPopoverLoading] = useState(false);
   const [participantPopoverDetail, setParticipantPopoverDetail] = useState(null);
@@ -149,6 +152,8 @@ const UpcomingDetailsPage = ({ route }) => {
   const [myBoarding, setMyBoarding] = useState(null);
   const [verifyTarget, setVerifyTarget] = useState(null);
   const [verifyLoading, setVerifyLoading] = useState(false);
+  const [passengerToRemove, setPassengerToRemove] = useState(null);
+  const [removingPassenger, setRemovingPassenger] = useState(false);
   const [seatsSaving, setSeatsSaving] = useState(false);
   const [chatUnread, setChatUnread] = useState({ driver: 0 });
   const [rideMeta, setRideMeta] = useState({});
@@ -157,7 +162,6 @@ const UpcomingDetailsPage = ({ route }) => {
     startTime: rideData?.startTime,
   });
   const [driverActionSubmitting, setDriverActionSubmitting] = useState(false);
-  const { ProfileDetails } = profileData();
   const myUserId =
     ProfileDetails?._id ||
     ProfileDetails?.id ||
@@ -347,6 +351,32 @@ const UpcomingDetailsPage = ({ route }) => {
     isDriver &&
     (normalizedRideStatus === "pending" || normalizedRideStatus === "started");
 
+  const participantTabs = useMemo(() => {
+    const tabs = ["Passengers", "Couriers"];
+    if (!quickReserve) {
+      tabs.push("Pax requests", "Courier requests");
+    }
+    return tabs;
+  }, [quickReserve]);
+
+  const pendingRequestCount =
+    passengerRequests.length + courierRequests.length;
+
+  const openParticipantsSlider = useCallback(
+    (tabIndex = 0) => {
+      const max = Math.max(0, participantTabs.length - 1);
+      setParticipantTabIndex(Math.min(Math.max(0, tabIndex), max));
+      setActiveSlider("participants");
+    },
+    [participantTabs.length]
+  );
+
+  useEffect(() => {
+    if (participantTabIndex >= participantTabs.length) {
+      setParticipantTabIndex(0);
+    }
+  }, [participantTabs.length, participantTabIndex]);
+
   const handleSaveSeats = async (totalSeats) => {
     try {
       setSeatsSaving(true);
@@ -455,26 +485,54 @@ const UpcomingDetailsPage = ({ route }) => {
       });
   }, [fetchRideDetails, rideData?._id]);
 
-  const handleRemovePassenger = async (passengerId) => {
-    try {
-      const token = await AsyncStorage.getItem("token");
-      const payload = {
-        rideId: rideData?._id,
-        passenger_userId: passengerId,
-      };
-      const response = await removepassenger(token, payload);
-      if (response?.status) {
-        Alert.alert("Removed", response.message);
-        fetchRideDetails();
-      } else {
-        Alert.alert("Error", response.message);
+  const handleRemovePassenger = useCallback(
+    async (passengerId) => {
+      const normalizedId = String(passengerId || "");
+      if (!normalizedId) {
+        Alert.alert("Error", "Could not identify passenger.");
+        return false;
       }
-      refreshUpcomingList();
-    } catch (error) {
-      console.log("Remove Error:", error);
-      Alert.alert("Error", error.message);
-    }
-  };
+
+      const stillOnRide = passengers.some(
+        (p) => getParticipantUserId(p) === normalizedId
+      );
+      if (!stillOnRide) {
+        Alert.alert(
+          "Already removed",
+          "This passenger is no longer on the ride."
+        );
+        fetchRideDetails();
+        return false;
+      }
+
+      try {
+        const token = await AsyncStorage.getItem("token");
+        const response = await removepassenger(token, {
+          rideId: rideData?._id,
+          passenger_userId: normalizedId,
+        });
+        if (response?.status) {
+          Alert.alert("Removed", response.message);
+          if (response.availableSeats != null) {
+            setLocalAvailableSeats(response.availableSeats);
+          }
+          await fetchRideDetails();
+          refreshUpcomingList();
+          return true;
+        }
+        Alert.alert("Error", response?.message || "Could not remove passenger");
+        return false;
+      } catch (error) {
+        const message = error?.message || "Could not remove passenger";
+        if (message.toLowerCase().includes("not found")) {
+          fetchRideDetails();
+        }
+        Alert.alert("Error", message);
+        return false;
+      }
+    },
+    [passengers, rideData?._id, fetchRideDetails, refreshUpcomingList]
+  );
 
   const handleRejectPassenger = async (passengerId) => {
     try {
@@ -498,10 +556,11 @@ const UpcomingDetailsPage = ({ route }) => {
   };
 
 
-  const refreshVerification = async () => {
+  const refreshVerification = useCallback(async () => {
     try {
       const token = await AsyncStorage.getItem("token");
-      const data = await listVerificationParticipants(token, rideData?._id);
+      if (!token || !rideData?._id) return null;
+      const data = await listVerificationParticipants(token, rideData._id);
       if (data?.success) {
         setVerification({
           total: data.total,
@@ -509,11 +568,108 @@ const UpcomingDetailsPage = ({ route }) => {
           allVerified: data.allVerified,
           participants: data.participants,
         });
+        return data;
       }
+      return null;
     } catch (err) {
       console.log("Verification refresh:", err.message);
+      return null;
     }
-  };
+  }, [rideData?._id]);
+
+  const prepareVerifyParticipant = useCallback(
+    async (item, role) => {
+      const user = item?.userId;
+      const data = await refreshVerification();
+      const uid = getParticipantUserId(item);
+      const list = data?.participants || verification?.participants || [];
+      const match = list.find(
+        (p) =>
+          (uid && String(p.userId) === uid) ||
+          (user?.userNo && p.userNo === String(user.userNo)) ||
+          (user?.name && p.name === user.name && p.role === role)
+      );
+      const userNo =
+        getParticipantUserNo(item) || match?.userNo || "";
+      if (!userNo) {
+        Alert.alert(
+          "User ID missing",
+          "Could not load this participant's 6-digit User ID. Pull to refresh ride details, or enter their ID manually."
+        );
+      }
+      return {
+        name: user?.name || match?.name || "Participant",
+        userNo,
+        role: role || match?.role || "passenger",
+      };
+    },
+    [refreshVerification, verification?.participants]
+  );
+
+  const closeBottomSlider = useCallback(() => {
+    setActiveSlider(null);
+    setVerifyTarget(null);
+    setPassengerToRemove(null);
+  }, []);
+
+  const closeRemovePopover = useCallback(() => {
+    if (removingPassenger) return;
+    setPassengerToRemove(null);
+  }, [removingPassenger]);
+
+  const requestRemovePassenger = useCallback(
+    (item) => {
+      const id = getParticipantUserId(item);
+      if (!id) return;
+      const stillOnRide = passengers.some(
+        (p) => getParticipantUserId(p) === id
+      );
+      if (!stillOnRide) return;
+      setPassengerToRemove(item);
+    },
+    [passengers]
+  );
+
+  const confirmRemovePassenger = useCallback(
+    async (passengerId) => {
+      if (removingPassenger) return false;
+      const normalizedId = String(passengerId || "");
+      if (!normalizedId) return false;
+
+      const stillOnRide = passengers.some(
+        (p) => getParticipantUserId(p) === normalizedId
+      );
+      if (!stillOnRide) {
+        setPassengerToRemove(null);
+        return false;
+      }
+
+      setRemovingPassenger(true);
+      try {
+        const ok = await handleRemovePassenger(normalizedId);
+        if (ok) setPassengerToRemove(null);
+        return !!ok;
+      } finally {
+        setRemovingPassenger(false);
+      }
+    },
+    [removingPassenger, passengers, handleRemovePassenger]
+  );
+
+  const closeVerifyPopover = useCallback(() => {
+    if (verifyLoading) return;
+    setVerifyTarget(null);
+  }, [verifyLoading]);
+
+  const startVerifyFromParticipants = useCallback(
+    async (item, role) => {
+      if (item?.isBoardingVerified) return;
+      const prepared = await prepareVerifyParticipant(item, role);
+      if (!prepared) return;
+      setVerifyTarget(prepared);
+    },
+    [prepareVerifyParticipant]
+  );
 
   const openOtpSlider = async () => {
     setActiveSlider("otp");
@@ -521,39 +677,53 @@ const UpcomingDetailsPage = ({ route }) => {
     await refreshVerification();
   };
 
-  const handleVerifyBoarding = async ({ userNo, otp }) => {
-    try {
-      setVerifyLoading(true);
-      const token = await AsyncStorage.getItem("token");
-      const res = await verifyBoardingParticipant(token, rideData?._id, { userNo, otp });
-      Alert.alert(
-        "Picked up",
-        res?.message || "OTP verified — marked Picked Up"
-      );
-      DeviceEventEmitter.emit(NOTIFICATIONS_REFRESH_EVENT);
-      if (res?.verification) {
-        setVerification({
-          total: res.verification.total,
-          pending: res.verification.pending,
-          allVerified: res.verification.allVerified,
-          participants: res.verification.participants,
+  const handleVerifyBoarding = useCallback(
+    async ({ userNo, otp }) => {
+      try {
+        const token = await AsyncStorage.getItem("token");
+        const res = await verifyBoardingParticipant(token, rideData?._id, {
+          userNo,
+          otp,
         });
+        Alert.alert(
+          "Picked up",
+          res?.message || "OTP verified — marked Picked Up"
+        );
+        DeviceEventEmitter.emit(NOTIFICATIONS_REFRESH_EVENT);
+        if (res?.verification) {
+          setVerification({
+            total: res.verification.total,
+            pending: res.verification.pending,
+            allVerified: res.verification.allVerified,
+            participants: res.verification.participants,
+          });
+        }
+        await fetchRideDetails();
+        if (verifyTarget) {
+          setVerifyTarget(null);
+        } else if (res?.verification?.allVerified && activeSlider === "otp") {
+          setActiveSlider(null);
+          setVerifyTarget(null);
+        }
+        return true;
+      } catch (err) {
+        Alert.alert("Verification failed", err.message);
+        return false;
       }
-      fetchRideDetails();
-      if (res?.verification?.allVerified) {
-        setActiveSlider(null);
-        setVerifyTarget(null);
-      }
-    } catch (err) {
-      Alert.alert("Verification failed", err.message);
-    } finally {
-      setVerifyLoading(false);
-    }
-  };
+    },
+    [rideData?._id, fetchRideDetails, activeSlider, verifyTarget]
+  );
 
   const handleDropPassenger = async (item) => {
     const participantId = item?._id;
     if (!participantId || !rideIdStr) return;
+    if (!isRideStarted) {
+      Alert.alert(
+        "Start ride first",
+        "Start the ride before marking a passenger as dropped."
+      );
+      return;
+    }
     try {
       const token = await AsyncStorage.getItem("token");
       if (!token) return;
@@ -569,6 +739,13 @@ const UpcomingDetailsPage = ({ route }) => {
   const handleDeliverCourier = async (item) => {
     const participantId = item?._id;
     if (!participantId || !rideIdStr) return;
+    if (!isRideStarted) {
+      Alert.alert(
+        "Start ride first",
+        "Start the ride before marking a courier as delivered."
+      );
+      return;
+    }
     try {
       const token = await AsyncStorage.getItem("token");
       if (!token) return;
@@ -690,10 +867,6 @@ const UpcomingDetailsPage = ({ route }) => {
         rideData?.phone,
       "driver"
     );
-  };
-
-  const getUser = (item) => {
-    return typeof item.userId === "object" ? item.userId : {};
   };
 
   const handleAcceptCourier = async (courierId) => {
@@ -1008,128 +1181,18 @@ const UpcomingDetailsPage = ({ route }) => {
           </View>
         ) : null}
 
-        {/* DRIVER VIEW */}
+        {/* DRIVER VIEW — participants in popover */}
         {isDriver && (
           <>
-            <Text style={styles.section}>My Passengers</Text>
+            <DriverParticipantsHub
+              passengerCount={passengers.length}
+              courierCount={couriers.length}
+              pendingCount={pendingRequestCount}
+              quickReserve={quickReserve}
+              onOpen={() => openParticipantsSlider(0)}
+              onOpenPending={() => openParticipantsSlider(2)}
+            />
 
-            {detailsLoading ? (
-              <ActivityIndicator size="large" color={colors.primary} />
-            ) : passengers.length === 0 ? (
-              <Text style={styles.emptyList}>No passengers yet</Text>
-            ) : (
-              <ScrollView
-                nestedScrollEnabled
-                style={styles.participantListScroll}
-                contentContainerStyle={styles.participantListContent}
-                showsVerticalScrollIndicator
-                keyboardShouldPersistTaps="handled"
-              >
-                {passengers.map((item, index) => (
-                  <ParticipantCard
-                    key={item._id || item.userId?._id || index}
-                    user={item?.userId}
-                    role="passenger"
-                    subtitleLines={[
-                      item?.userId?.email || "No email",
-                      `Pickup: ${rideData?.from}`,
-                      `${item?.requires_seats || 1} seat(s)`,
-                    ]}
-                    fare={getPassengerFare(item)}
-                    fareLabel="Fare"
-                    verified={!!item?.isBoardingVerified}
-                    tripStatus={item?.status}
-                    showVerify={
-                      !item?.isBoardingVerified &&
-                      (rideStatus === "pending" || rideStatus === "started")
-                    }
-                    onVerify={() => {
-                      setVerifyTarget({
-                        name: item?.userId?.name,
-                        userNo: item?.userId?.userNo,
-                        role: "passenger",
-                      });
-                      setActiveSlider("otp");
-                    }}
-                    onDrop={
-                      canDropPassenger(item, isRideStarted)
-                        ? () => handleDropPassenger(item)
-                        : undefined
-                    }
-                    onCall={() =>
-                      handleCall(item?.userId?.mobile, "passenger")
-                    }
-                    onMessage={() =>
-                      openDirectChat({ userId: item.userId, role: "passenger" })
-                    }
-                    onRemove={() => {
-                      setSelectedPassenger(item);
-                      setActiveSlider("removePassenger");
-                    }}
-                    onPress={() => openParticipantDetails(item, "passenger")}
-                  />
-                ))}
-              </ScrollView>
-            )}
-
-            <Text style={styles.section}>My Couriers</Text>
-
-            {detailsLoading ? (
-              <ActivityIndicator size="large" color={colors.primary} />
-            ) : couriers.length === 0 ? (
-              <Text style={styles.emptyList}>No couriers yet</Text>
-            ) : (
-              <ScrollView
-                nestedScrollEnabled
-                style={styles.participantListScroll}
-                contentContainerStyle={styles.participantListContent}
-                showsVerticalScrollIndicator
-                keyboardShouldPersistTaps="handled"
-              >
-                {couriers.map((item, index) => (
-                  <ParticipantCard
-                    key={item._id || item.userId?._id || index}
-                    user={item?.userId}
-                    role="courier"
-                    courier={item}
-                    subtitleLines={[
-                      item?.userId?.email || "No email",
-                      item?.userId?.mobile || "",
-                    ]}
-                    fare={item?.amount_will || 0}
-                    fareLabel="Amount"
-                    verified={!!item?.isBoardingVerified}
-                    tripStatus={item?.status}
-                    showVerify={
-                      !item?.isBoardingVerified &&
-                      (rideStatus === "pending" || rideStatus === "started")
-                    }
-                    onVerify={() => {
-                      setVerifyTarget({
-                        name: item?.userId?.name,
-                        userNo: item?.userId?.userNo,
-                        role: "courier",
-                      });
-                      setActiveSlider("otp");
-                    }}
-                    onDeliver={
-                      canDeliverCourier(item, isRideStarted)
-                        ? () => handleDeliverCourier(item)
-                        : undefined
-                    }
-                    onCall={() =>
-                      handleCall(item?.userId?.mobile, "courier")
-                    }
-                    onMessage={() =>
-                      openDirectChat({ userId: item.userId, role: "courier" })
-                    }
-                    onRemove={() => handleRemoveCourier(item._id)}
-                    onPress={() => openParticipantDetails(item, "courier")}
-                  />
-                ))}
-              </ScrollView>
-            )}
-            {/* SEND REQUEST */}
             <TouchableOpacity
               style={styles.sendRequestBtn}
               onPress={() => setActiveSlider("enroute")}
@@ -1138,135 +1201,6 @@ const UpcomingDetailsPage = ({ route }) => {
                 Send Request to en route Passengers
               </Text>
             </TouchableOpacity>
-
-            {!quickReserve && (
-            <>
-            <Text style={styles.section}>Passenger Requests</Text>
-
-            {detailsLoading ? (
-              <ActivityIndicator size="large" color={colors.primary} />
-            ) : passengerRequests.length === 0 ? (
-              <Text style={styles.emptyList}>No Requests</Text>
-            ) : (
-              passengerRequests.map((item, index) => (
-                <View key={index} style={styles.requestCard}>
-                  <View style={styles.requestTopRow}>
-                    <View style={styles.requestLeft}>
-                      <UserAvatar user={item?.userId} size={44} />
-
-                      <View>
-                        <Text style={styles.requestName}>
-                          {item?.userId?.name || "Passenger"}
-                        </Text>
-
-                        <Text style={styles.requestSub}>
-                          {item?.userId?.gender || "N/A"} •{" "}
-                          {item?.requires_seats} Seat
-                        </Text>
-
-                        <Text style={styles.requestPickup}>
-                          {item?.userId?.email || "No email"}
-                        </Text>
-                      </View>
-                    </View>
-                    <View style={styles.priceContainer}>
-                      <Image source={caricon} style={styles.carIcon} />
-
-                    </View>
-
-                    <Text style={styles.requestPrice}>
-                      ₹ {getPassengerFare(item)}
-                    </Text>
-
-                  </View>
-
-                  <View style={styles.requestBtnRow}>
-                    <TouchableOpacity
-                      style={styles.acceptBtn}
-                      onPress={() =>
-                        handleAcceptPassenger(item?.userId?._id)
-                      }
-                    >
-                      <Text style={styles.acceptText}>✓ Accept</Text>
-                    </TouchableOpacity>
-
-                    <TouchableOpacity
-                      style={styles.declineBtn}
-                      onPress={() =>
-                        handleRejectPassenger(
-                          item?.userId?._id
-                        )
-                      }
-                    >
-                      <Text style={styles.declineText}>✕ Decline</Text>
-                    </TouchableOpacity>
-                  </View>
-
-                </View>
-
-
-              ))
-            )}
-            <Text style={styles.section}>Courier Requests</Text>
-
-            {detailsLoading ? (
-              <ActivityIndicator size="large" color={colors.primary} />
-            ) : courierRequests.length === 0 ? (
-              <Text style={styles.emptyList}>
-                No Courier Requests
-              </Text>
-            ) : (
-              courierRequests.map((item, index) => {
-                                const user = getUser(item);
-
-            return (
-            <View key={index} style={styles.requestCard}>
-              <View style={styles.requestTopRow}>
-                <View style={styles.requestLeft}>
-                  <UserAvatar user={user} size={44} />
-
-                  <View>
-                    <Text style={styles.requestName}>
-                      {user?.name || "Courier"}
-                    </Text>
-
-                    <Text style={styles.requestSub}>
-                      {formatCourierParcelLine(item)}
-                    </Text>
-
-                    <Text style={styles.requestPickup}>
-                      {user?.email || "No email"}
-                    </Text>
-                    <CourierParcelPreview courier={item} compact />
-                  </View>
-                </View>
-
-                <Text style={styles.requestPrice}>
-                  ₹ {getCourierFare(item)}
-                </Text>
-              </View>
-
-              <View style={styles.requestBtnRow}>
-                <TouchableOpacity
-                  style={styles.acceptBtn}
-                  onPress={() => handleAcceptCourier(item._id)}
-                >
-                  <Text style={styles.acceptText}>✓ Accept</Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  style={styles.declineBtn}
-                  onPress={() => handleRejectCourier(item._id)}
-                >
-                  <Text style={styles.declineText}>✕ Decline</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-            );
-  })
-)}
-            </>
-            )}
           </>
         )}
         {!isDriver && (
@@ -1348,42 +1282,94 @@ const UpcomingDetailsPage = ({ route }) => {
 
       <BottomSlider
         visible={activeSlider !== null}
-        onClose={() => setActiveSlider(null)}
-        scrollable={
-          activeSlider === "otp" ||
-          activeSlider === "enroute" ||
-          activeSlider === "removePassenger"
+        onClose={closeBottomSlider}
+        scrollable={activeSlider === "cancelRide" || activeSlider === "otp"}
+        heightRatio={
+          activeSlider === "participants"
+            ? 0.88
+            : activeSlider === "otp"
+              ? 0.78
+              : activeSlider === "cancelRide"
+                ? 0.55
+                : activeSlider === "enroute"
+                  ? 0.72
+                  : 0.65
         }
-        height={
-          activeSlider === "otp"
-            ? 420
-            : activeSlider === "cancelRide"
-              ? 480
-              : 100
+        dragHeader={
+          activeSlider === "participants"
+            ? buildParticipantsDragHeader({
+                styles: participantSheetStyles,
+                colors,
+                tabs: participantTabs,
+                activeTabIndex: participantTabIndex,
+                onTabChange: setParticipantTabIndex,
+                passengers,
+                couriers,
+                passengerRequests,
+                courierRequests,
+              })
+            : null
         }
       >
+        {activeSlider === "participants" && (
+          <DriverParticipantsSheet
+            visible
+            tabs={participantTabs}
+            activeTabIndex={participantTabIndex}
+            detailsLoading={detailsLoading}
+            passengers={passengers}
+            couriers={couriers}
+            passengerRequests={passengerRequests}
+            courierRequests={courierRequests}
+            rideFrom={rideData?.from}
+            rideStatus={normalizedRideStatus}
+            isRideStarted={isRideStarted}
+            onStartVerify={startVerifyFromParticipants}
+            onDropPassenger={handleDropPassenger}
+            onDeliverCourier={handleDeliverCourier}
+            onCall={handleCall}
+            onMessage={(item, role) => {
+              setActiveSlider(null);
+              openDirectChat({ userId: item.userId, role });
+            }}
+            onRemovePassenger={requestRemovePassenger}
+            onRemoveCourier={handleRemoveCourier}
+            onPressPassenger={(item) =>
+              openParticipantDetails(item, "passenger")
+            }
+            onPressCourier={(item) => openParticipantDetails(item, "courier")}
+            onAcceptPassenger={handleAcceptPassenger}
+            onRejectPassenger={handleRejectPassenger}
+            onAcceptCourier={handleAcceptCourier}
+            onRejectCourier={handleRejectCourier}
+          />
+        )}
 
         {/* OTP */}
         {activeSlider === "otp" && (
-          <View>
-            {verification?.participants?.length > 0 && (
+          <View style={styles.otpSliderBody}>
+            {verification?.participants?.length > 0 ? (
               <View style={styles.participantPicker}>
-                <Text style={styles.participantPickerTitle}>Tap to verify</Text>
+                <Text style={styles.participantPickerTitle}>
+                  Select participant
+                </Text>
                 {verification.participants.map((p, idx) => (
                   <TouchableOpacity
                     key={`${p.userNo}-${idx}`}
                     style={[
                       styles.participantChip,
                       p.isBoardingVerified && styles.participantChipDone,
-                      verifyTarget?.userNo === p.userNo && styles.participantChipActive,
+                      verifyTarget?.userNo === p.userNo &&
+                        styles.participantChipActive,
                     ]}
                     onPress={() =>
                       setVerifyTarget({
                         name: p.name,
-                        userNo: p.userNo,
+                        userNo: p.userNo || "",
                         role: p.role,
                       })
                     }
+                    disabled={p.isBoardingVerified}
                   >
                     <Text style={styles.participantChipText}>
                       {p.name} ({p.role}) — {p.userNo || "?"}{" "}
@@ -1392,17 +1378,23 @@ const UpcomingDetailsPage = ({ route }) => {
                   </TouchableOpacity>
                 ))}
               </View>
-            )}
-            <OtpModel
-              passengerName={
+            ) : null}
+            <VerifyBoardingPanel
+              participantName={
                 verifyTarget?.name ||
                 (verifyTarget?.role === "courier" ? "Courier" : "Passenger")
               }
+              role={verifyTarget?.role || "passenger"}
               userNo={verifyTarget?.userNo || ""}
-              userNoEditable={!verifyTarget?.userNo}
               verifying={verifyLoading}
-              subtitle="Ask for their 6-digit User ID and 4-digit boarding OTP"
-              onVerify={handleVerifyBoarding}
+              onVerify={async (payload) => {
+                setVerifyLoading(true);
+                try {
+                  return await handleVerifyBoarding(payload);
+                } finally {
+                  setVerifyLoading(false);
+                }
+              }}
             />
           </View>
         )}
@@ -1415,15 +1407,6 @@ const UpcomingDetailsPage = ({ route }) => {
             date={formatLocalISODate(rideData?.date)}
             rideId={rideData?._id}
             onPickSuccess={handleEnroutePickSuccess}
-          />
-        )}
-
-        {/* REMOVE PASSENGER */}
-        {activeSlider === "removePassenger" && selectedPassenger && (
-          <RemovePassengerModal
-            passenger={selectedPassenger}
-            onClose={() => setActiveSlider(null)}
-            onRemove={handleRemovePassenger}
           />
         )}
 
@@ -1442,6 +1425,32 @@ const UpcomingDetailsPage = ({ route }) => {
         detail={participantPopoverDetail}
         loading={participantPopoverLoading}
         onClose={closeParticipantPopover}
+      />
+
+      <VerifyBoardingPopover
+        visible={!!verifyTarget && activeSlider === "participants"}
+        participantName={verifyTarget?.name}
+        role={verifyTarget?.role || "passenger"}
+        userNo={verifyTarget?.userNo || ""}
+        verifying={verifyLoading}
+        onClose={closeVerifyPopover}
+        onVerify={async (payload) => {
+          setVerifyLoading(true);
+          try {
+            return await handleVerifyBoarding(payload);
+          } finally {
+            setVerifyLoading(false);
+          }
+        }}
+      />
+
+      <RemovePassengerPopover
+        visible={!!passengerToRemove && activeSlider === "participants"}
+        passenger={passengerToRemove}
+        rideFrom={rideData?.from}
+        removing={removingPassenger}
+        onClose={closeRemovePopover}
+        onRemove={confirmRemovePassenger}
       />
 
 
@@ -1643,9 +1652,14 @@ const createStyles = (c) => {
     fontSize: LAYOUT.font.small,
     fontWeight: "600",
   },
+  otpSliderBody: {
+    flex: 1,
+    paddingBottom: 8,
+  },
   participantPicker: {
     paddingHorizontal: LAYOUT.spacing.md,
     paddingTop: LAYOUT.spacing.sm,
+    marginBottom: 4,
   },
   participantPickerTitle: {
     fontSize: LAYOUT.font.label,
@@ -1989,18 +2003,6 @@ const createStyles = (c) => {
     fontWeight: "600",
     marginLeft: 6,
     color: c.text,
-  },
-  participantListScroll: {
-    maxHeight: scale(300),
-    marginBottom: LAYOUT.spacing.md,
-    borderWidth: 1,
-    borderColor: c.border,
-    borderRadius: LAYOUT.radius?.lg || 14,
-    backgroundColor: c.surfaceAlt,
-  },
-  participantListContent: {
-    padding: LAYOUT.spacing.sm,
-    paddingBottom: LAYOUT.spacing.md,
   },
   emptyList: {
     textAlign: "center",

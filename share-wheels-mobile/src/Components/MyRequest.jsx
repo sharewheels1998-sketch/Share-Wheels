@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from "react";
+import React, { useState, useCallback, useRef, useEffect } from "react";
 import {
   View,
   Text,
@@ -147,9 +147,14 @@ const MyRequest = () => {
   const tabs = ["Passenger", "Courier"];
   const activeIndex = tabs.indexOf(activeTab);
 
-  const fetchPassengerRequests = useCallback(async () => {
+  const activeTabRef = useRef(activeTab);
+  useEffect(() => {
+    activeTabRef.current = activeTab;
+  }, [activeTab]);
+
+  const fetchPassengerRequests = useCallback(async ({ showLoader = true } = {}) => {
     try {
-      setLoading(true);
+      if (showLoader) setLoading(true);
       setFetchError("");
 
       const token = await AsyncStorage.getItem("token");
@@ -170,9 +175,9 @@ const MyRequest = () => {
     }
   }, []);
 
-  const fetchCourierRequests = useCallback(async () => {
+  const fetchCourierRequests = useCallback(async ({ showLoader = true } = {}) => {
     try {
-      setLoading(true);
+      if (showLoader) setLoading(true);
       setFetchError("");
 
       const token = await AsyncStorage.getItem("token");
@@ -202,35 +207,42 @@ const MyRequest = () => {
 
   useFocusEffect(
     useCallback(() => {
-      const nextTab = normalizeRequestTab(route.params?.activeTab, tabs);
-      const tabToLoad = nextTab || activeTab;
+      const paramTab = normalizeRequestTab(route.params?.activeTab, tabs);
 
-      if (nextTab) {
-        setActiveTab(nextTab);
+      if (paramTab) {
+        setActiveTab(paramTab);
+        if (paramTab === "Courier") {
+          fetchCourierRequests();
+        } else {
+          fetchPassengerRequests();
+        }
+        return;
       }
 
-      if (tabToLoad === "Courier") {
-        fetchCourierRequests();
+      const currentTab = activeTabRef.current;
+      if (currentTab === "Courier") {
+        fetchCourierRequests({ showLoader: false });
       } else {
-        fetchPassengerRequests();
+        fetchPassengerRequests({ showLoader: false });
       }
-    }, [
-      route.params?.activeTab,
-      activeTab,
-      fetchCourierRequests,
-      fetchPassengerRequests,
-    ])
+    }, [route.params?.activeTab, fetchCourierRequests, fetchPassengerRequests])
   );
 
   useMyRequestsSocket(fetchActiveTabRequests);
 
   const handleTabChange = (index) => {
     const nextTab = tabs[index];
+    if (!nextTab || nextTab === activeTab) return;
+
+    if (route.params?.activeTab != null) {
+      navigation.setParams({ activeTab: undefined });
+    }
+
     setActiveTab(nextTab);
     if (nextTab === "Courier") {
-      fetchCourierRequests();
+      fetchCourierRequests({ showLoader: courierRides.length === 0 });
     } else {
-      fetchPassengerRequests();
+      fetchPassengerRequests({ showLoader: passengerRides.length === 0 });
     }
   };
 

@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useCallback } from "react";
+import React, { useEffect, useRef, useCallback, useState } from "react";
 import { StatusBar, StyleSheet, DeviceEventEmitter } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { NOTIFICATIONS_REFRESH_EVENT } from "./src/context/NotificationsContext";
@@ -24,10 +24,12 @@ import { registerNotifeeForegroundPress } from "./src/Notifications/displayLocal
 import { handleNotificationOpen } from "./src/Notifications/notificationNavigation";
 import { consumePendingNotificationOpen } from "./src/Notifications/notifeeBackground";
 import { syncFcmTokenWithBackend } from "./src/Notifications/registerToken";
+import { SPLASH_LAUNCH_BACKGROUND } from "./src/theme/splashTiming";
 
 function AppShell() {
   const navigationRef = useRef(null);
   const { colors, navigationTheme } = useTheme();
+  const [navReady, setNavReady] = useState(false);
 
   const onNotificationOpen = useCallback((remoteMessage) => {
     if (!remoteMessage || !navigationRef.current) return;
@@ -35,6 +37,7 @@ function AppShell() {
   }, []);
 
   const handleNavigationReady = useCallback(async () => {
+    setNavReady(true);
     const token = await AsyncStorage.getItem("token");
     if (token) {
       syncFcmTokenWithBackend({ force: false }).catch(() => {});
@@ -94,19 +97,32 @@ function AppShell() {
     };
   }, [onNotificationOpen]);
 
+  const rootBg = navReady ? colors.background : SPLASH_LAUNCH_BACKGROUND;
+
   return (
     <GestureHandlerRootView
-      style={[styles.mainContainer, { backgroundColor: colors.background }]}
+      style={[styles.mainContainer, { backgroundColor: rootBg }]}
     >
       <StatusBar
         translucent={false}
-        backgroundColor={colors.statusBarBg}
-        barStyle={colors.statusBar}
+        backgroundColor={navReady ? colors.statusBarBg : SPLASH_LAUNCH_BACKGROUND}
+        barStyle={navReady ? colors.statusBar : "light-content"}
       />
       <NavigationContainer
         ref={navigationRef}
         onReady={handleNavigationReady}
-        theme={navigationTheme}
+        theme={
+          navReady
+            ? navigationTheme
+            : {
+                ...navigationTheme,
+                colors: {
+                  ...navigationTheme.colors,
+                  background: SPLASH_LAUNCH_BACKGROUND,
+                  card: SPLASH_LAUNCH_BACKGROUND,
+                },
+              }
+        }
       >
         <AdsProvider>
           <AuthNavigator />
@@ -118,7 +134,10 @@ function AppShell() {
 
 export default function App() {
   return (
-    <SafeAreaProvider initialMetrics={initialWindowMetrics}>
+    <SafeAreaProvider
+      initialMetrics={initialWindowMetrics}
+      style={[styles.mainContainer, { backgroundColor: SPLASH_LAUNCH_BACKGROUND }]}
+    >
       <ThemeProvider>
         <AppShell />
       </ThemeProvider>
