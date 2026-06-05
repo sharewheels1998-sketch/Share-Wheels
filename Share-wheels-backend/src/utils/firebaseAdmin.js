@@ -4,6 +4,12 @@ const fs = require("fs");
 
 let messagingClient = null;
 let initAttempted = false;
+let lastFcmError = null;
+let configuredProjectId = null;
+
+function setFcmError(message) {
+  lastFcmError = message;
+}
 
 function parseJsonEnv(raw) {
   let trimmed = String(raw).trim();
@@ -30,10 +36,12 @@ function normalizeServiceAccount(account) {
     account;
 
   if (!privateKey || typeof privateKey !== "string") {
+    setFcmError("missing_private_key");
     console.error("[FCM] Service account missing private_key");
     return null;
   }
   if (!clientEmail || !projectId) {
+    setFcmError("missing_client_email_or_project_id");
     console.error("[FCM] Service account missing client_email or project_id");
     return null;
   }
@@ -50,6 +58,7 @@ function loadServiceAccount() {
     try {
       return parseJsonEnv(jsonEnv);
     } catch (err) {
+      setFcmError(`invalid_json_env: ${err.message}`);
       console.error("[FCM] Invalid FIREBASE_SERVICE_ACCOUNT_JSON:", err.message);
       return null;
     }
@@ -61,6 +70,7 @@ function loadServiceAccount() {
       const json = Buffer.from(String(base64Env).trim(), "base64").toString("utf8");
       return parseJsonEnv(json);
     } catch (err) {
+      setFcmError(`invalid_base64_env: ${err.message}`);
       console.error("[FCM] Invalid FIREBASE_SERVICE_ACCOUNT_BASE64:", err.message);
       return null;
     }
@@ -80,6 +90,7 @@ function loadServiceAccount() {
 
   const resolved = candidates.find((p) => fs.existsSync(p));
   if (!resolved) {
+    setFcmError("no_credentials");
     console.warn(
       "[FCM] No credentials found. Set FIREBASE_SERVICE_ACCOUNT_JSON on Render or add firebase-service-account.json locally."
     );
@@ -90,6 +101,7 @@ function loadServiceAccount() {
     const raw = fs.readFileSync(resolved, "utf8");
     return parseJsonEnv(raw);
   } catch (err) {
+    setFcmError(`file_load_failed: ${err.message}`);
     console.error("[FCM] Failed to load service account file:", err.message);
     return null;
   }
@@ -111,6 +123,9 @@ function initializeFirebaseAdmin() {
 
   const serviceAccount = normalizeServiceAccount(raw);
   if (!serviceAccount) {
+    if (!lastFcmError) {
+      setFcmError("invalid_service_account");
+    }
     return false;
   }
 
@@ -119,11 +134,14 @@ function initializeFirebaseAdmin() {
       credential: admin.credential.cert(serviceAccount),
     });
     messagingClient = admin.messaging();
+    configuredProjectId = serviceAccount.project_id;
+    lastFcmError = null;
     console.log(
       `[FCM] Firebase Admin initialized (project: ${serviceAccount.project_id})`
     );
     return true;
   } catch (err) {
+    setFcmError(`init_failed: ${err.message}`);
     console.error("[FCM] Firebase Admin init failed:", err.message);
     return false;
   }
@@ -221,6 +239,18 @@ function isFirebaseReady() {
   return initializeFirebaseAdmin() && admin.apps.length > 0;
 }
 
+function getFirebaseStatus() {
+  const ready = isFirebaseReady();
+  return {
+    ready,
+    projectId: configuredProjectId,
+    hasJsonEnv: Boolean(process.env.FIREBASE_SERVICE_ACCOUNT_JSON),
+    hasBase64Env: Boolean(process.env.FIREBASE_SERVICE_ACCOUNT_BASE64),
+    jsonEnvLength: process.env.FIREBASE_SERVICE_ACCOUNT_JSON?.length || 0,
+    error: ready ? null : lastFcmError || "not_initialized",
+  };
+}
+
 // Eager init so startup logs and /health reflect FCM status immediately
 initializeFirebaseAdmin();
 
@@ -228,6 +258,7 @@ module.exports = {
   sendPushNotification,
   getMessaging,
   isFirebaseReady,
+  getFirebaseStatus,
   normalizeData,
   initializeFirebaseAdmin,
 };
