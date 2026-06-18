@@ -16,6 +16,25 @@ const DriverParticipantsHub = ({
   const { colors } = useTheme();
   const styles = useThemedStyles(createStyles);
   const total = passengerCount + courierCount;
+  const showPending = pendingCount > 0;
+
+  const subtitle = (() => {
+    if (showPending && total === 0) {
+      return quickReserve
+        ? `${pendingCount} pending request${pendingCount === 1 ? "" : "s"} · tap to review`
+        : `${pendingCount} request${pendingCount === 1 ? "" : "s"} need approval`;
+    }
+    if (total > 0 && quickReserve) {
+      return `${total} on this ride · Quick Reserve on`;
+    }
+    if (total > 0) {
+      return `${total} on this ride · tap to manage`;
+    }
+    if (quickReserve) {
+      return "Quick Reserve on · waiting for joiners";
+    }
+    return "No one joined yet · tap to view requests";
+  })();
 
   return (
     <View style={styles.wrap}>
@@ -30,11 +49,7 @@ const DriverParticipantsHub = ({
           </View>
           <View style={styles.headerText}>
             <Text style={styles.title}>Participants</Text>
-            <Text style={styles.subtitle}>
-              {total > 0
-                ? `${total} on this ride · tap to manage`
-                : "No one joined yet · tap to view requests"}
-            </Text>
+            <Text style={styles.subtitle}>{subtitle}</Text>
           </View>
           <View style={styles.chevronWrap}>
             <Icon name="chevron-forward" size={20} color={colors.primary} />
@@ -52,34 +67,35 @@ const DriverParticipantsHub = ({
             <Text style={styles.statNum}>{courierCount}</Text>
             <Text style={styles.statLabel}>Couriers</Text>
           </View>
-          {!quickReserve ? (
+          {showPending ? (
             <View
               style={[
                 styles.statPill,
                 styles.statPending,
-                pendingCount > 0 && styles.statPendingActive,
+                styles.statPendingActive,
               ]}
             >
-              <Icon
-                name="notifications-outline"
-                size={18}
-                color={pendingCount > 0 ? colors.warningText : colors.textMuted}
-              />
-              <Text
-                style={[
-                  styles.statNum,
-                  pendingCount > 0 && styles.statNumHighlight,
-                ]}
-              >
+              <Icon name="notifications-outline" size={18} color={colors.warningText} />
+              <Text style={[styles.statNum, styles.statNumHighlight]}>
                 {pendingCount}
               </Text>
               <Text style={styles.statLabel}>Pending</Text>
             </View>
-          ) : null}
+          ) : (
+            <View style={[styles.statPill, styles.statQuick]}>
+              <Icon
+                name={quickReserve ? "flash" : "time-outline"}
+                size={18}
+                color={quickReserve ? colors.primary : colors.textMuted}
+              />
+              <Text style={styles.statNum}>{quickReserve ? "ON" : "OFF"}</Text>
+              <Text style={styles.statLabel}>Quick reserve</Text>
+            </View>
+          )}
         </View>
       </TouchableOpacity>
 
-      {!quickReserve && pendingCount > 0 ? (
+      {showPending ? (
         <TouchableOpacity
           style={styles.alertBanner}
           onPress={onOpenPending}
@@ -183,6 +199,10 @@ const createStyles = (c) =>
       backgroundColor: c.warningBg,
       borderColor: c.warningBorder,
     },
+    statQuick: {
+      backgroundColor: c.primaryMuted,
+      borderColor: c.border,
+    },
     statNum: {
       fontSize: 20,
       fontWeight: "800",
@@ -199,6 +219,7 @@ const createStyles = (c) =>
       marginTop: 2,
       textTransform: "uppercase",
       letterSpacing: 0.35,
+      textAlign: "center",
     },
     alertBanner: {
       flexDirection: "row",

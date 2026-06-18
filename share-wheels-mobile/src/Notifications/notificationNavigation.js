@@ -85,11 +85,23 @@ const navigateToRideDetails = async (navigation, rideId) => {
   return true;
 };
 
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+const waitForNavigationReady = async (navigation, attempts = 12) => {
+  for (let i = 0; i < attempts; i += 1) {
+    if (navigation?.isReady?.()) return true;
+    await sleep(250);
+  }
+  return Boolean(navigation?.navigate);
+};
+
 /**
  * Navigate from a notification tap (background, quit, or foreground).
  */
 export async function handleNotificationOpen(navigation, remoteMessage) {
-  if (!navigation?.isReady?.() && !navigation?.navigate) return;
+  if (!navigation) return;
+
+  await waitForNavigationReady(navigation);
 
   const payload = parseNotificationPayload(remoteMessage);
   const { type, rideId, peerId, peerName, peerRole, peerProfileImg } = payload;

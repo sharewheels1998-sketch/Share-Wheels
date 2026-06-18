@@ -129,15 +129,6 @@ export async function getDeviceTokenWithPermission() {
 
   await ensureNotificationChannel();
 
-  if (Platform.OS === "android") {
-    try {
-      const msg = messaging();
-      await registerDeviceForRemoteMessages(msg);
-    } catch {
-      /* ignore */
-    }
-  }
-
   for (let attempt = 0; attempt < 4; attempt += 1) {
     const token = await getDeviceToken();
     if (token) return token;
@@ -149,11 +140,18 @@ export async function getDeviceTokenWithPermission() {
 export function registerForegroundHandler(onMessageCb) {
   return onMessage(messaging(), async (remoteMessage) => {
     try {
-      await displayForegroundNotification(remoteMessage);
+      await displayForegroundNotification(remoteMessage, { source: "foreground" });
     } catch (e) {
-      console.warn("[FCM] foreground display:", e.message);
+      console.warn(
+        "[FCM] foreground display:",
+        e?.message || String(e)
+      );
     }
-    onMessageCb?.(remoteMessage);
+    try {
+      onMessageCb?.(remoteMessage);
+    } catch (e) {
+      console.warn("[FCM] foreground callback:", e?.message || e);
+    }
   });
 }
 
@@ -163,12 +161,8 @@ export function registerNotificationOpenedApp(onNotification) {
   });
 }
 
-export async function handleInitialNotification(onNotification) {
-  const remoteMessage = await getInitialNotification(messaging());
-  if (remoteMessage) {
-    onNotification?.(remoteMessage);
-  }
-  return remoteMessage;
+export async function handleInitialNotification() {
+  return getInitialNotification(messaging());
 }
 
 export function registerTokenRefreshHandler(onToken) {

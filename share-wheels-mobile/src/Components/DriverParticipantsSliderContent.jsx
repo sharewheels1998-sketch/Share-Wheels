@@ -297,12 +297,16 @@ const DriverParticipantsSliderContent = ({
   ]);
 
   const emptyCopy = useMemo(() => {
+    const hasPending =
+      passengerRequests.length > 0 || courierRequests.length > 0;
     switch (activeTab) {
       case "All":
         return {
           icon: "layers-outline",
           title: "No participants yet",
-          sub: "Accepted passengers and couriers appear here.",
+          sub: hasPending
+            ? "Open Pax requests or Courier requests tabs to review pending joiners."
+            : "Accepted passengers and couriers appear here.",
         };
       case "Passengers":
         return {
@@ -329,7 +333,7 @@ const DriverParticipantsSliderContent = ({
           sub: "Parcel requests for this ride appear here.",
         };
     }
-  }, [activeTab]);
+  }, [activeTab, passengerRequests.length, courierRequests.length]);
 
   const renderItem = useCallback(
     ({ item: row }) => {

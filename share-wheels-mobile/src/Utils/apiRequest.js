@@ -52,9 +52,12 @@ export async function apiRequest(url, options = {}) {
   const data = await parseApiResponse(response);
 
   if (!response.ok) {
-    throw new Error(
+    const error = new Error(
       getApiErrorMessage(data, `Request failed (${response.status})`)
     );
+    if (data?.code) error.code = data.code;
+    error.status = response.status;
+    throw error;
   }
 
   return data;

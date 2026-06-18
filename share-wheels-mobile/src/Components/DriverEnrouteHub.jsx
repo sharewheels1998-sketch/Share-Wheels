@@ -10,15 +10,35 @@ const DriverEnrouteHub = ({
   courierCount,
   loading = false,
   picksRemaining,
-  ridesRemaining,
-  isFreePlan,
   unlimitedPicks,
   planName,
+  subscriptionActive = true,
+  isDeactivated = false,
   onOpen,
 }) => {
   const { colors } = useTheme();
   const styles = useThemedStyles(createStyles);
   const total = passengerCount + courierCount;
+
+  const subtitle = (() => {
+    if (loading) return "Checking nearby passengers & couriers…";
+    if (isDeactivated || !subscriptionActive) {
+      const planSuffix = planName ? ` · ${planName}` : "";
+      return `Plan deactivated${planSuffix} · renew to pick enroute`;
+    }
+    if (unlimitedPicks) {
+      return `Unlimited enroute pickups${
+        planName ? ` · ${planName}` : ""
+      }${total > 0 ? ` · ${total} nearby` : " · tap to refresh"}`;
+    }
+    if (picksRemaining != null) {
+      return `${picksRemaining} enroute pickup${picksRemaining === 1 ? "" : "s"} left${
+        planName ? ` · ${planName}` : ""
+      } · ${total > 0 ? `${total} nearby` : "tap to refresh"}`;
+    }
+    if (total > 0) return `${total} nearby · tap to pick up`;
+    return "No nearby requests · tap to refresh";
+  })();
 
   return (
     <View style={styles.wrap}>
@@ -33,25 +53,7 @@ const DriverEnrouteHub = ({
           </View>
           <View style={styles.headerText}>
             <Text style={styles.title}>En route requests</Text>
-            <Text style={styles.subtitle}>
-              {loading
-                ? "Checking nearby passengers & couriers…"
-                : isFreePlan && ridesRemaining != null
-                  ? `${ridesRemaining} free ride${ridesRemaining === 1 ? "" : "s"} left · unlimited picks per ride${
-                      total > 0 ? ` · ${total} nearby` : ""
-                    }`
-                  : unlimitedPicks
-                    ? `Unlimited picks${
-                        planName ? ` on ${planName}` : ""
-                      }${total > 0 ? ` · ${total} nearby` : " · tap to refresh"}`
-                    : picksRemaining != null
-                      ? `${picksRemaining} pick${picksRemaining === 1 ? "" : "s"} left${
-                          planName ? ` on ${planName}` : ""
-                        } · ${total > 0 ? `${total} nearby` : "tap to refresh"}`
-                      : total > 0
-                        ? `${total} nearby · tap to pick up`
-                        : "No nearby requests · tap to refresh"}
-            </Text>
+            <Text style={styles.subtitle}>{subtitle}</Text>
           </View>
           <View style={styles.chevronWrap}>
             {loading ? (

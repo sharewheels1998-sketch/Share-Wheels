@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from "react";
+import React, { useCallback, useMemo, useState } from "react";
 import {
   View,
   Text,
@@ -9,6 +9,7 @@ import {
   Alert,
   RefreshControl,
 } from "react-native";
+import LinearGradient from "react-native-linear-gradient";
 import Icon from "react-native-vector-icons/Ionicons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useFocusEffect, useNavigation } from "@react-navigation/native";
@@ -25,6 +26,7 @@ import {
   verifySubscriptionPayment,
 } from "../ApiService/subscriptionApiService";
 import { getApiErrorMessage } from "../Utils/apiErrors";
+import { buildRazorpayCheckoutOptions } from "../Utils/razorpayCheckout";
 
 let RazorpayCheckout = null;
 try {
@@ -46,88 +48,251 @@ const formatExpiry = (value) => {
   return date.toLocaleDateString();
 };
 
+const getPlanTheme = (plan, colors, { isCurrent = false, isDeactivated = false } = {}) => {
+  const isFree = plan?.isFree || plan?.amount === 0;
+  if (isDeactivated) {
+    return {
+      accent: [colors.warningText || "#D97706", "#F59E0B"],
+      bg: [colors.warningBg || "#FFFBEB", colors.surface],
+      border: colors.warningText || "#D97706",
+      chipBg: colors.warningBg || "#FEF3C7",
+      chipText: colors.warningText || "#B45309",
+      icon: "close-circle-outline",
+    };
+  }
+  if (isCurrent) {
+    return {
+      accent: [colors.primary, colors.infoText || "#3B82F6"],
+      bg: [colors.primaryMuted, colors.surface],
+      border: colors.primary,
+      chipBg: colors.primaryMuted,
+      chipText: colors.primary,
+      icon: "checkmark-circle",
+    };
+  }
+  if (isFree) {
+    return {
+      accent: ["#10B981", "#059669"],
+      bg: [colors.tintGreen || "#ECFDF5", colors.surface],
+      border: colors.successText || "#059669",
+      chipBg: colors.successBg || "#D1FAE5",
+      chipText: colors.successText || "#047857",
+      icon: "gift-outline",
+    };
+  }
+  return {
+    accent: ["#8B5CF6", "#6366F1"],
+    bg: [colors.tintOrange || "#F5F3FF", colors.surface],
+    border: colors.border,
+    chipBg: colors.chipBg,
+    chipText: colors.warningText || "#7C3AED",
+    icon: "card-outline",
+  };
+};
+
+const UsageProgressBar = ({ used, limit, unlimited, colors, styles }) => {
+  if (unlimited) return null;
+  const safeLimit = Math.max(1, Number(limit) || 1);
+  const safeUsed = Math.min(safeLimit, Math.max(0, Number(used) || 0));
+  const pct = Math.round((safeUsed / safeLimit) * 100);
+
+  return (
+    <View style={styles.progressWrap}>
+      <View style={styles.progressTrack}>
+        <View
+          style={[
+            styles.progressFill,
+            {
+              width: `${pct}%`,
+              backgroundColor: pct >= 100 ? colors.warningText : colors.primary,
+            },
+          ]}
+        />
+      </View>
+      <Text style={styles.progressLabel}>
+        {safeUsed} of {safeLimit} enroute pickups used ({pct}%)
+      </Text>
+    </View>
+  );
+};
+
+const MetaChip = ({ icon, label, tint, textColor, styles }) => (
+  <View style={[styles.metaPill, tint ? { backgroundColor: tint } : null]}>
+    <Icon name={icon} size={13} color={textColor} />
+    <Text style={styles.metaPillText}>{label}</Text>
+  </View>
+);
+
 const PlanCard = ({
   plan,
-  active,
+  isCurrent,
+  isDeactivated,
+  deactivationReason,
   subscribing,
   canSubscribeToFree,
+  paymentsEnabled = true,
   onSubscribe,
   styles,
   colors,
 }) => {
   const isFree = plan.isFree || plan.amount === 0;
-  const freeBlocked = isFree && !canSubscribeToFree && !active;
+  const freeBlocked = isFree && !canSubscribeToFree && !isCurrent;
+  const paidPaymentsBlocked = !isFree && !paymentsEnabled;
+  const theme = getPlanTheme(plan, colors, { isCurrent, isDeactivated });
+  const canSubscribe =
+    ((!isCurrent && !freeBlocked && !paidPaymentsBlocked) ||
+      (isDeactivated && !isFree && paymentsEnabled)) &&
+    !subscribing;
+
+  const deactivatedLabel =
+    deactivationReason === "picks_exhausted"
+      ? "Deactivated · pickups used"
+      : deactivationReason === "expired"
+        ? "Deactivated · expired"
+        : "Deactivated";
 
   return (
-    <View style={[styles.planCard, active && styles.planCardActive]}>
-      <View style={styles.planHeader}>
-        <View style={styles.planTitleRow}>
-          <Text style={styles.planName}>{plan.name}</Text>
-          {active ? (
-            <View style={styles.activePill}>
-              <Text style={styles.activePillText}>Current</Text>
+    <View style={[styles.planCardOuter, { borderColor: theme.border }]}>
+      <LinearGradient
+        colors={theme.bg}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
+        style={styles.planCardGradient}
+      >
+        <LinearGradient
+          colors={theme.accent}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 0 }}
+          style={styles.planTopAccent}
+        />
+
+        <View style={styles.planInner}>
+          <View style={styles.planHeaderRow}>
+            <View style={[styles.planIconWrap, { backgroundColor: theme.chipBg }]}>
+              <Icon name={theme.icon} size={20} color={theme.chipText} />
+            </View>
+            <View style={styles.planHeaderText}>
+              <View style={styles.planTitleRow}>
+                <Text style={styles.planName} numberOfLines={1}>
+                  {plan.name}
+                </Text>
+                {isCurrent ? (
+                  <View style={styles.activePill}>
+                    <Text style={styles.activePillText}>Current</Text>
+                  </View>
+                ) : null}
+                {isDeactivated ? (
+                  <View style={styles.deactivatedPill}>
+                    <Text style={styles.deactivatedPillText}>{deactivatedLabel}</Text>
+                  </View>
+                ) : null}
+                {isFree && !isCurrent && !isDeactivated ? (
+                  <View style={styles.trialPill}>
+                    <Text style={styles.trialPillText}>One-time</Text>
+                  </View>
+                ) : null}
+              </View>
+              <Text style={styles.planPrice}>
+                {isFree ? "Free" : `₹${plan.amount}`}
+                <Text style={styles.planPeriod}> / {formatPeriod(plan)}</Text>
+              </Text>
+            </View>
+          </View>
+
+          {plan.description ? (
+            <Text style={styles.planDescription}>{plan.description}</Text>
+          ) : null}
+
+          <View style={styles.planMetaRow}>
+            <MetaChip
+              icon="time-outline"
+              label={formatPeriod(plan)}
+              textColor={colors.textMuted}
+              styles={styles}
+            />
+            {plan.unlimitedPicks ? (
+              <MetaChip
+                icon="infinite"
+                label="Unlimited pickups"
+                tint={colors.successBg}
+                textColor={colors.successText}
+                styles={styles}
+              />
+            ) : (
+              <MetaChip
+                icon="navigate-outline"
+                label={`${plan.enroutePickLimit ?? "—"} pickups`}
+                tint={colors.primaryMuted}
+                textColor={colors.primary}
+                styles={styles}
+              />
+            )}
+          </View>
+
+          {freeBlocked ? (
+            <View style={styles.blockedBanner}>
+              <Icon name="information-circle-outline" size={16} color={colors.warningText} />
+              <Text style={styles.blockedNote}>
+                Free plan already used. Choose a paid plan to continue.
+              </Text>
             </View>
           ) : null}
-          {isFree && !active ? (
-            <View style={styles.trialPill}>
-              <Text style={styles.trialPillText}>One-time trial</Text>
+
+          {paidPaymentsBlocked ? (
+            <View style={styles.blockedBanner}>
+              <Icon name="card-outline" size={16} color={colors.warningText} />
+              <Text style={styles.blockedNote}>
+                Online payments are not available yet. Ask admin to configure Razorpay.
+              </Text>
             </View>
           ) : null}
-        </View>
-        <Text style={styles.planPrice}>
-          {isFree ? "Free" : `₹${plan.amount}`}
-          {!isFree ? (
-            <Text style={styles.planPeriod}> / {formatPeriod(plan)}</Text>
+
+          {canSubscribe ? (
+            <TouchableOpacity
+              style={[styles.subscribeBtn, subscribing && styles.subscribeBtnDisabled]}
+              onPress={() => onSubscribe(plan)}
+              disabled={subscribing}
+              activeOpacity={0.88}
+            >
+              <LinearGradient
+                colors={
+                  isDeactivated
+                    ? [colors.warningText || "#D97706", "#F59E0B"]
+                    : [colors.primary, colors.infoText || "#3B82F6"]
+                }
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 0 }}
+                style={styles.subscribeBtnGradient}
+              >
+                {subscribing ? (
+                  <ActivityIndicator size="small" color={colors.inverseText} />
+                ) : (
+                  <>
+                    <Icon
+                      name={
+                        isDeactivated
+                          ? "refresh-outline"
+                          : isFree
+                            ? "flash-outline"
+                            : "wallet-outline"
+                      }
+                      size={18}
+                      color={colors.inverseText}
+                    />
+                    <Text style={styles.subscribeBtnText}>
+                      {isDeactivated
+                        ? `Renew · ₹${plan.amount}`
+                        : isFree
+                          ? "Activate free plan"
+                          : `Pay ₹${plan.amount} · Scan UPI / card`}
+                    </Text>
+                  </>
+                )}
+              </LinearGradient>
+            </TouchableOpacity>
           ) : null}
-        </Text>
-      </View>
-
-      {plan.description ? (
-        <Text style={styles.planDescription}>{plan.description}</Text>
-      ) : null}
-
-      <View style={styles.planMetaRow}>
-        <View style={styles.metaPill}>
-          <Icon name="time-outline" size={14} color={colors.textMuted} />
-          <Text style={styles.metaPillText}>{formatPeriod(plan)}</Text>
         </View>
-        {plan.unlimitedPicks ? (
-          <View style={styles.metaPill}>
-            <Icon name="infinite" size={14} color={colors.successText} />
-            <Text style={styles.metaPillText}>Unlimited picks</Text>
-          </View>
-        ) : (
-          <View style={styles.metaPill}>
-            <Icon name="navigate" size={14} color={colors.primary} />
-            <Text style={styles.metaPillText}>
-              {plan.enroutePickLimit ?? plan.rideLimit ?? "—"} en route picks
-            </Text>
-          </View>
-        )}
-      </View>
-
-      {freeBlocked ? (
-        <Text style={styles.blockedNote}>
-          Free plan already used. Choose a paid plan to continue.
-        </Text>
-      ) : null}
-
-      {!active && !freeBlocked ? (
-        <TouchableOpacity
-          style={[styles.subscribeBtn, subscribing && styles.subscribeBtnDisabled]}
-          onPress={() => onSubscribe(plan)}
-          disabled={subscribing}
-          activeOpacity={0.85}
-        >
-          {subscribing ? (
-            <ActivityIndicator size="small" color={colors.inverseText} />
-          ) : (
-            <Text style={styles.subscribeBtnText}>
-              {isFree ? "Activate free plan" : `Pay ₹${plan.amount} & subscribe`}
-            </Text>
-          )}
-        </TouchableOpacity>
-      ) : null}
+      </LinearGradient>
     </View>
   );
 };
@@ -144,6 +309,7 @@ const DriverSubscriptionScreen = () => {
   const [subscription, setSubscription] = useState(null);
   const [plans, setPlans] = useState([]);
   const [canSubscribeToFree, setCanSubscribeToFree] = useState(true);
+  const [razorpayConfigured, setRazorpayConfigured] = useState(false);
   const [razorpayKeyId, setRazorpayKeyId] = useState("");
 
   const load = useCallback(async ({ showSpinner = true } = {}) => {
@@ -155,6 +321,7 @@ const DriverSubscriptionScreen = () => {
       setSubscription(res?.subscription || null);
       setPlans(res?.plans || []);
       setCanSubscribeToFree(res?.canSubscribeToFree !== false);
+      setRazorpayConfigured(res?.razorpayConfigured === true);
       setRazorpayKeyId(res?.razorpayKeyId || "");
     } catch (err) {
       Alert.alert("Could not load plans", getApiErrorMessage(err, "Try again."));
@@ -171,6 +338,14 @@ const DriverSubscriptionScreen = () => {
   );
 
   const handlePaidSubscribe = async (token, plan) => {
+    if (!razorpayConfigured) {
+      Alert.alert(
+        "Payments unavailable",
+        "Razorpay is not configured on the server. Add RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET to the backend .env and restart."
+      );
+      return;
+    }
+
     if (!RazorpayCheckout) {
       Alert.alert(
         "Payment unavailable",
@@ -185,7 +360,7 @@ const DriverSubscriptionScreen = () => {
       throw new Error("Could not start payment. Try again.");
     }
 
-    const options = {
+    const baseOptions = buildRazorpayCheckoutOptions({
       key: keyId,
       amount: orderRes.order.amount,
       currency: orderRes.order.currency || "INR",
@@ -194,7 +369,10 @@ const DriverSubscriptionScreen = () => {
       order_id: orderRes.order.id,
       prefill: orderRes.prefill || {},
       theme: { color: colors.primary || "#2563EB" },
-    };
+    });
+    const options = orderRes?.checkout
+      ? { ...baseOptions, ...orderRes.checkout }
+      : baseOptions;
 
     const paymentData = await RazorpayCheckout.open(options);
 
@@ -243,9 +421,40 @@ const DriverSubscriptionScreen = () => {
     }
   };
 
-  const activePlanId = subscription?.planId?.toString?.() || subscription?.planId;
-  const isLegacyFree = subscription?.isLegacyFreeRidePlan;
-  const showPickStats = subscription && !isLegacyFree;
+  const subscriptionPlanId =
+    subscription?.planId?.toString?.() || subscription?.planId;
+
+  const hasPaidPlans = useMemo(
+    () => plans.some((plan) => !plan.isFree && Number(plan.amount) > 0),
+    [plans]
+  );
+
+  const statusBanner = useMemo(() => {
+    if (!subscription) return null;
+    if (subscription.isDeactivated) {
+      if (subscription.deactivationReason === "picks_exhausted") {
+        return {
+          tone: "warning",
+          icon: "ban-outline",
+          text: subscription.isFree
+            ? "Free plan deactivated — pickups used. Upgrade to a paid plan."
+            : "Plan deactivated — pickups used. Renew this plan or choose another.",
+        };
+      }
+      return {
+        tone: "warning",
+        icon: "alert-circle-outline",
+        text: subscription.isFree
+          ? "Free plan deactivated — upgrade to continue picking enroute requests."
+          : "Plan deactivated — renew or choose another plan to continue.",
+      };
+    }
+    return {
+      tone: "success",
+      icon: "checkmark-circle-outline",
+      text: `Active until ${formatExpiry(subscription.expiresAt)}`,
+    };
+  }, [subscription]);
 
   return (
     <ScreenContainer style={{ paddingHorizontal: LAYOUT.spacing.screen }}>
@@ -254,6 +463,7 @@ const DriverSubscriptionScreen = () => {
       {loading ? (
         <View style={styles.centerBox}>
           <ActivityIndicator size="large" color={colors.primary} />
+          <Text style={styles.loadingText}>Loading your plan…</Text>
         </View>
       ) : (
         <ScrollView
@@ -265,125 +475,204 @@ const DriverSubscriptionScreen = () => {
                 setRefreshing(true);
                 load({ showSpinner: false });
               }}
+              tintColor={colors.primary}
             />
           }
           contentContainerStyle={{
             paddingBottom: getScrollBottomPadding(insets.bottom, 24),
           }}
         >
-          <View style={styles.usageCard}>
-            <View style={styles.usageIcon}>
-              <Icon name="shield-checkmark" size={24} color={colors.inverseText} />
-            </View>
-            <Text style={styles.usageTitle}>En route picking</Text>
-            <Text style={styles.usageSubtitle}>
-              Subscription required to pick nearby passengers and couriers on your route.
-            </Text>
+          <View style={styles.usageCardOuter}>
+            <LinearGradient
+              colors={
+                subscription?.isDeactivated
+                  ? [colors.warningBg || "#FFFBEB", colors.surface]
+                  : [colors.primaryMuted, colors.surface]
+              }
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={styles.usageCard}
+            >
+              <LinearGradient
+                colors={
+                  subscription?.isDeactivated
+                    ? [colors.warningText || "#D97706", "#F59E0B"]
+                    : [colors.primary, colors.infoText || "#3B82F6"]
+                }
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 0 }}
+                style={styles.usageTopAccent}
+              />
 
-            {subscription ? (
-              <>
-                <View style={styles.usageStats}>
-                  {isLegacyFree ? (
-                    <>
-                      <View style={styles.usageStat}>
-                        <Text style={styles.usageStatNum}>
-                          {subscription.ridesRemaining ?? 0}
-                        </Text>
-                        <Text style={styles.usageStatLabel}>Rides left</Text>
-                      </View>
-                      <View style={styles.usageStat}>
-                        <Text style={styles.usageStatNum}>
-                          {subscription.rideLimit ?? 0}
-                        </Text>
-                        <Text style={styles.usageStatLabel}>Ride limit</Text>
-                      </View>
-                      <View style={styles.usageStat}>
-                        <Text style={styles.usageStatNum}>
-                          {subscription.ridesUsed ?? 0}
-                        </Text>
-                        <Text style={styles.usageStatLabel}>Rides used</Text>
-                      </View>
-                    </>
-                  ) : subscription.unlimitedPicks ? (
-                    <>
-                      <View style={styles.usageStat}>
-                        <Text style={styles.usageStatNum}>∞</Text>
-                        <Text style={styles.usageStatLabel}>Unlimited</Text>
-                      </View>
-                      <View style={styles.usageStat}>
-                        <Text style={styles.usageStatNum}>
-                          {subscription.picksUsed ?? 0}
-                        </Text>
-                        <Text style={styles.usageStatLabel}>Picks used</Text>
-                      </View>
-                      <View style={styles.usageStat}>
-                        <Text style={styles.usageStatNum}>
-                          {formatExpiry(subscription.expiresAt)}
-                        </Text>
-                        <Text style={styles.usageStatLabel}>Expires</Text>
-                      </View>
-                    </>
-                  ) : showPickStats ? (
-                    <>
-                      <View style={styles.usageStat}>
-                        <Text style={styles.usageStatNum}>
-                          {subscription.picksRemaining ?? 0}
-                        </Text>
-                        <Text style={styles.usageStatLabel}>Picks left</Text>
-                      </View>
-                      <View style={styles.usageStat}>
-                        <Text style={styles.usageStatNum}>
-                          {subscription.enroutePickLimit ?? 0}
-                        </Text>
-                        <Text style={styles.usageStatLabel}>Plan limit</Text>
-                      </View>
-                      <View style={styles.usageStat}>
-                        <Text style={styles.usageStatNum}>
-                          {subscription.picksUsed ?? 0}
-                        </Text>
-                        <Text style={styles.usageStatLabel}>Used</Text>
-                      </View>
-                    </>
-                  ) : null}
+              <View style={styles.usageHeader}>
+                <View style={styles.usageIcon}>
+                  <Icon name="navigate" size={22} color={colors.inverseText} />
                 </View>
-                <Text style={styles.usageMeta}>
-                  Plan: {subscription.plan?.name || "—"}
-                  {subscription.isExpired
-                    ? " · Expired — upgrade to continue"
-                    : subscription.picksExhausted
-                      ? " · Picks used up — upgrade to continue"
-                      : ` · Valid until ${formatExpiry(subscription.expiresAt)}`}
-                </Text>
-              </>
-            ) : (
-              <Text style={styles.usageMeta}>
-                No active plan. Choose a plan below to start picking en route requests.
-              </Text>
-            )}
+                <View style={styles.usageHeaderText}>
+                  <Text style={styles.usageTitle}>Enroute pickups</Text>
+                  <Text style={styles.usageSubtitle}>
+                    {subscription?.isDeactivated
+                      ? "Your plan is deactivated. Renew or upgrade to pick enroute again."
+                      : "Pick passengers and couriers along your route while your plan is active."}
+                  </Text>
+                </View>
+              </View>
+
+              {subscription ? (
+                <>
+                  {statusBanner ? (
+                    <View
+                      style={[
+                        styles.statusBanner,
+                        statusBanner.tone === "warning"
+                          ? styles.statusBannerWarning
+                          : styles.statusBannerSuccess,
+                      ]}
+                    >
+                      <Icon
+                        name={statusBanner.icon}
+                        size={16}
+                        color={
+                          statusBanner.tone === "warning"
+                            ? colors.warningText
+                            : colors.successText
+                        }
+                      />
+                      <Text
+                        style={[
+                          styles.statusBannerText,
+                          statusBanner.tone === "warning"
+                            ? styles.statusBannerTextWarning
+                            : styles.statusBannerTextSuccess,
+                        ]}
+                      >
+                        {statusBanner.text}
+                      </Text>
+                    </View>
+                  ) : null}
+
+                  <View style={styles.usageStats}>
+                    {subscription.unlimitedPicks ? (
+                      <>
+                        <View style={[styles.usageStat, styles.usageStatHighlight]}>
+                          <Text style={styles.usageStatNum}>∞</Text>
+                          <Text style={styles.usageStatLabel}>Unlimited</Text>
+                        </View>
+                        <View style={styles.usageStat}>
+                          <Text style={styles.usageStatNum}>
+                            {subscription.picksUsed ?? 0}
+                          </Text>
+                          <Text style={styles.usageStatLabel}>Used</Text>
+                        </View>
+                        <View style={styles.usageStat}>
+                          <Text style={[styles.usageStatNum, styles.usageStatDate]}>
+                            {formatExpiry(subscription.expiresAt)}
+                          </Text>
+                          <Text style={styles.usageStatLabel}>Expires</Text>
+                        </View>
+                      </>
+                    ) : (
+                      <>
+                        <View style={[styles.usageStat, styles.usageStatHighlight]}>
+                          <Text style={styles.usageStatNum}>
+                            {subscription.picksRemaining ?? 0}
+                          </Text>
+                          <Text style={styles.usageStatLabel}>Left</Text>
+                        </View>
+                        <View style={styles.usageStat}>
+                          <Text style={styles.usageStatNum}>
+                            {subscription.enroutePickLimit ?? 0}
+                          </Text>
+                          <Text style={styles.usageStatLabel}>Limit</Text>
+                        </View>
+                        <View style={styles.usageStat}>
+                          <Text style={styles.usageStatNum}>
+                            {subscription.picksUsed ?? 0}
+                          </Text>
+                          <Text style={styles.usageStatLabel}>Used</Text>
+                        </View>
+                      </>
+                    )}
+                  </View>
+
+                  <UsageProgressBar
+                    used={subscription.picksUsed}
+                    limit={subscription.enroutePickLimit}
+                    unlimited={subscription.unlimitedPicks}
+                    colors={colors}
+                    styles={styles}
+                  />
+
+                  <Text style={styles.usageMeta}>
+                    {subscription.isActive ? "Current plan: " : "Last plan: "}
+                    <Text style={styles.usageMetaStrong}>
+                      {subscription.plan?.name || "—"}
+                    </Text>
+                    {subscription.isDeactivated ? (
+                      <Text style={styles.usageMetaDeactivated}> · Deactivated</Text>
+                    ) : null}
+                  </Text>
+                </>
+              ) : (
+                <View style={styles.noPlanBox}>
+                  <Icon name="ticket-outline" size={28} color={colors.textMuted} />
+                  <Text style={styles.noPlanTitle}>No active plan</Text>
+                  <Text style={styles.noPlanSub}>
+                    Choose a plan below to start picking enroute requests.
+                  </Text>
+                </View>
+              )}
+            </LinearGradient>
           </View>
 
-          <Text style={styles.sectionTitle}>Available plans</Text>
+          <View style={styles.sectionHeader}>
+            <Text style={styles.sectionTitle}>Available plans</Text>
+            <View style={styles.sectionCount}>
+              <Text style={styles.sectionCountText}>{plans.length}</Text>
+            </View>
+          </View>
+
+          {hasPaidPlans && !razorpayConfigured ? (
+            <View style={styles.paymentsBanner}>
+              <Icon name="wallet-outline" size={18} color={colors.warningText} />
+              <Text style={styles.paymentsBannerText}>
+                Paid plans need Razorpay on the server. Set API keys in backend .env, restart,
+                then rebuild the app for checkout.
+              </Text>
+            </View>
+          ) : null}
 
           {plans.length === 0 ? (
             <View style={styles.emptyBox}>
+              <View style={styles.emptyIconWrap}>
+                <Icon name="layers-outline" size={32} color={colors.primary} />
+              </View>
               <Text style={styles.emptyTitle}>No plans configured</Text>
               <Text style={styles.emptySub}>
                 Ask admin to add driver subscription plans in the admin panel.
               </Text>
             </View>
           ) : (
-            plans.map((plan) => (
-              <PlanCard
-                key={plan._id}
-                plan={plan}
-                active={activePlanId && String(activePlanId) === String(plan._id)}
-                subscribing={subscribingId === plan._id}
-                canSubscribeToFree={canSubscribeToFree}
-                onSubscribe={handleSubscribe}
-                styles={styles}
-                colors={colors}
-              />
-            ))
+            plans.map((plan) => {
+              const planId = String(plan._id);
+              const isPlanMatch =
+                subscriptionPlanId && String(subscriptionPlanId) === planId;
+              return (
+                <PlanCard
+                  key={plan._id}
+                  plan={plan}
+                  isCurrent={isPlanMatch && !!subscription?.isActive}
+                  isDeactivated={isPlanMatch && !!subscription?.isDeactivated}
+                  deactivationReason={subscription?.deactivationReason}
+                  subscribing={subscribingId === plan._id}
+                  canSubscribeToFree={canSubscribeToFree}
+                  paymentsEnabled={razorpayConfigured}
+                  onSubscribe={handleSubscribe}
+                  styles={styles}
+                  colors={colors}
+                />
+              );
+            })
           )}
         </ScrollView>
       )}
@@ -400,23 +689,50 @@ const createStyles = (c) =>
       alignItems: "center",
       justifyContent: "center",
       paddingVertical: 48,
+      gap: 12,
     },
-    usageCard: {
-      backgroundColor: c.surface,
-      borderRadius: 20,
-      padding: 18,
+    loadingText: {
+      fontSize: 14,
+      color: c.textMuted,
+      fontWeight: "600",
+    },
+    usageCardOuter: {
+      borderRadius: 22,
+      marginBottom: 20,
       borderWidth: 1,
       borderColor: c.border,
-      marginBottom: 18,
+      overflow: "hidden",
+      shadowColor: c.shadow,
+      shadowOffset: { width: 0, height: 4 },
+      shadowOpacity: 0.08,
+      shadowRadius: 12,
+      elevation: 3,
+    },
+    usageCard: {
+      padding: 18,
+      paddingTop: 0,
+    },
+    usageTopAccent: {
+      height: 4,
+      marginHorizontal: -18,
+      marginBottom: 16,
+    },
+    usageHeader: {
+      flexDirection: "row",
+      alignItems: "flex-start",
+      gap: 12,
+      marginBottom: 14,
     },
     usageIcon: {
-      width: 48,
-      height: 48,
-      borderRadius: 16,
+      width: 46,
+      height: 46,
+      borderRadius: 15,
       backgroundColor: c.primary,
       alignItems: "center",
       justifyContent: "center",
-      marginBottom: 12,
+    },
+    usageHeaderText: {
+      flex: 1,
     },
     usageTitle: {
       fontSize: 18,
@@ -426,27 +742,64 @@ const createStyles = (c) =>
     usageSubtitle: {
       fontSize: 13,
       color: c.textMuted,
-      marginTop: 6,
+      marginTop: 4,
       lineHeight: 18,
+    },
+    statusBanner: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 8,
+      borderRadius: 12,
+      paddingHorizontal: 12,
+      paddingVertical: 10,
+      marginBottom: 14,
+      borderWidth: 1,
+    },
+    statusBannerSuccess: {
+      backgroundColor: c.successBg,
+      borderColor: c.successText + "33",
+    },
+    statusBannerWarning: {
+      backgroundColor: c.warningBg,
+      borderColor: (c.warningText || "#D97706") + "33",
+    },
+    statusBannerText: {
+      flex: 1,
+      fontSize: 12,
+      fontWeight: "600",
+      lineHeight: 17,
+    },
+    statusBannerTextSuccess: {
+      color: c.successText,
+    },
+    statusBannerTextWarning: {
+      color: c.warningText,
     },
     usageStats: {
       flexDirection: "row",
       gap: 8,
-      marginTop: 16,
     },
     usageStat: {
       flex: 1,
-      backgroundColor: c.primaryMuted,
+      backgroundColor: c.surface,
       borderRadius: 14,
       paddingVertical: 12,
       alignItems: "center",
       borderWidth: 1,
       borderColor: c.border,
     },
+    usageStatHighlight: {
+      backgroundColor: c.primaryMuted,
+      borderColor: c.primary + "44",
+    },
     usageStatNum: {
       fontSize: 22,
       fontWeight: "800",
       color: c.text,
+    },
+    usageStatDate: {
+      fontSize: 11,
+      fontWeight: "700",
     },
     usageStatLabel: {
       fontSize: 10,
@@ -454,33 +807,138 @@ const createStyles = (c) =>
       color: c.textMuted,
       marginTop: 4,
       textTransform: "uppercase",
+      letterSpacing: 0.3,
+    },
+    progressWrap: {
+      marginTop: 14,
+    },
+    progressTrack: {
+      height: 8,
+      borderRadius: 999,
+      backgroundColor: c.chipBg,
+      overflow: "hidden",
+    },
+    progressFill: {
+      height: "100%",
+      borderRadius: 999,
+    },
+    progressLabel: {
+      marginTop: 6,
+      fontSize: 11,
+      fontWeight: "600",
+      color: c.textMuted,
     },
     usageMeta: {
-      fontSize: 12,
+      fontSize: 13,
       color: c.textSecondary,
-      marginTop: 12,
-      lineHeight: 17,
+      marginTop: 14,
     },
-    sectionTitle: {
+    usageMetaStrong: {
+      fontWeight: "800",
+      color: c.text,
+    },
+    usageMetaDeactivated: {
+      fontWeight: "700",
+      color: c.warningText,
+    },
+    noPlanBox: {
+      alignItems: "center",
+      paddingVertical: 20,
+      gap: 6,
+    },
+    noPlanTitle: {
       fontSize: 16,
       fontWeight: "800",
       color: c.text,
+      marginTop: 4,
+    },
+    noPlanSub: {
+      fontSize: 13,
+      color: c.textMuted,
+      textAlign: "center",
+      lineHeight: 18,
+      paddingHorizontal: 12,
+    },
+    sectionHeader: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
       marginBottom: 12,
     },
-    planCard: {
-      backgroundColor: c.surface,
-      borderRadius: 18,
-      padding: 16,
-      borderWidth: 1,
-      borderColor: c.border,
-      marginBottom: 12,
+    sectionTitle: {
+      fontSize: 17,
+      fontWeight: "800",
+      color: c.text,
     },
-    planCardActive: {
-      borderColor: c.primary,
+    sectionCount: {
+      minWidth: 28,
+      height: 28,
+      borderRadius: 14,
       backgroundColor: c.primaryMuted,
+      alignItems: "center",
+      justifyContent: "center",
+      paddingHorizontal: 8,
     },
-    planHeader: {
-      marginBottom: 8,
+    sectionCountText: {
+      fontSize: 12,
+      fontWeight: "800",
+      color: c.primary,
+    },
+    paymentsBanner: {
+      flexDirection: "row",
+      alignItems: "flex-start",
+      gap: 10,
+      backgroundColor: c.warningBg,
+      borderRadius: 14,
+      padding: 14,
+      marginBottom: 14,
+      borderWidth: 1,
+      borderColor: (c.warningText || "#D97706") + "33",
+    },
+    paymentsBannerText: {
+      flex: 1,
+      fontSize: 13,
+      lineHeight: 18,
+      color: c.text,
+      fontWeight: "600",
+    },
+    planCardOuter: {
+      borderRadius: 20,
+      marginBottom: 14,
+      borderWidth: 1.5,
+      overflow: "hidden",
+      shadowColor: c.shadow,
+      shadowOffset: { width: 0, height: 3 },
+      shadowOpacity: 0.07,
+      shadowRadius: 10,
+      elevation: 2,
+    },
+    planCardGradient: {
+      borderRadius: 18,
+    },
+    planTopAccent: {
+      height: 4,
+      width: "100%",
+    },
+    planInner: {
+      padding: 16,
+    },
+    planHeaderRow: {
+      flexDirection: "row",
+      alignItems: "flex-start",
+      gap: 12,
+      marginBottom: 10,
+    },
+    planIconWrap: {
+      width: 42,
+      height: 42,
+      borderRadius: 14,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    planHeaderText: {
+      flex: 1,
+      minWidth: 0,
     },
     planTitleRow: {
       flexDirection: "row",
@@ -492,7 +950,7 @@ const createStyles = (c) =>
       fontSize: 17,
       fontWeight: "800",
       color: c.text,
-      flex: 1,
+      flexShrink: 1,
     },
     activePill: {
       backgroundColor: c.successBg,
@@ -504,6 +962,20 @@ const createStyles = (c) =>
       fontSize: 10,
       fontWeight: "800",
       color: c.successText,
+      textTransform: "uppercase",
+    },
+    deactivatedPill: {
+      backgroundColor: c.warningBg,
+      borderRadius: 999,
+      paddingHorizontal: 10,
+      paddingVertical: 4,
+      borderWidth: 1,
+      borderColor: (c.warningText || "#D97706") + "44",
+    },
+    deactivatedPillText: {
+      fontSize: 9,
+      fontWeight: "800",
+      color: c.warningText,
       textTransform: "uppercase",
     },
     trialPill: {
@@ -519,27 +991,27 @@ const createStyles = (c) =>
       textTransform: "uppercase",
     },
     planPrice: {
-      fontSize: 24,
+      fontSize: 22,
       fontWeight: "800",
       color: c.primary,
       marginTop: 4,
     },
     planPeriod: {
-      fontSize: 14,
+      fontSize: 13,
       fontWeight: "600",
       color: c.textMuted,
     },
     planDescription: {
       fontSize: 13,
       color: c.textMuted,
-      lineHeight: 18,
-      marginBottom: 10,
+      lineHeight: 19,
+      marginBottom: 12,
     },
     planMetaRow: {
       flexDirection: "row",
       flexWrap: "wrap",
       gap: 8,
-      marginBottom: 12,
+      marginBottom: 14,
     },
     metaPill: {
       flexDirection: "row",
@@ -555,34 +1027,65 @@ const createStyles = (c) =>
       fontWeight: "600",
       color: c.textSecondary,
     },
+    blockedBanner: {
+      flexDirection: "row",
+      alignItems: "flex-start",
+      gap: 8,
+      backgroundColor: c.warningBg,
+      borderRadius: 12,
+      padding: 10,
+      marginBottom: 12,
+      borderWidth: 1,
+      borderColor: (c.warningText || "#D97706") + "33",
+    },
     blockedNote: {
+      flex: 1,
       fontSize: 12,
-      color: c.warningText || c.textMuted,
-      marginBottom: 10,
+      color: c.warningText,
       lineHeight: 17,
+      fontWeight: "600",
     },
     subscribeBtn: {
-      backgroundColor: c.primary,
-      borderRadius: 12,
-      paddingVertical: 12,
-      alignItems: "center",
+      borderRadius: 14,
+      overflow: "hidden",
     },
     subscribeBtnDisabled: {
-      opacity: 0.7,
+      opacity: 0.75,
+    },
+    subscribeBtnGradient: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "center",
+      gap: 8,
+      paddingVertical: 14,
+      paddingHorizontal: 16,
     },
     subscribeBtnText: {
       color: c.inverseText,
-      fontWeight: "700",
+      fontWeight: "800",
       fontSize: 14,
     },
     emptyBox: {
       alignItems: "center",
-      paddingVertical: 32,
-      paddingHorizontal: 16,
+      paddingVertical: 36,
+      paddingHorizontal: 20,
+      borderRadius: 20,
+      borderWidth: 1,
+      borderColor: c.border,
+      backgroundColor: c.surface,
+    },
+    emptyIconWrap: {
+      width: 64,
+      height: 64,
+      borderRadius: 20,
+      backgroundColor: c.primaryMuted,
+      alignItems: "center",
+      justifyContent: "center",
+      marginBottom: 12,
     },
     emptyTitle: {
       fontSize: 16,
-      fontWeight: "700",
+      fontWeight: "800",
       color: c.text,
     },
     emptySub: {

@@ -9,6 +9,7 @@ import {
   Pressable,
 } from "react-native";
 import LinearGradient from "react-native-linear-gradient";
+import Icon from "react-native-vector-icons/Ionicons";
 import { useNavigation } from "@react-navigation/native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Animated, {
@@ -18,7 +19,6 @@ import Animated, {
   withSpring,
   withRepeat,
   withSequence,
-  withDelay,
   Easing,
   interpolate,
   FadeIn,
@@ -26,10 +26,10 @@ import Animated, {
   FadeInUp,
 } from "react-native-reanimated";
 import { AUTH_COLORS, AUTH_GRADIENTS } from "../../theme/authTheme";
-import { LAYOUT, scale, verticalScale, moderateScale } from "../../theme/layout";
+import { LAYOUT, scale, moderateScale } from "../../theme/layout";
 import ScreenContainer from "../../Components/ui/ScreenContainer";
 import SplashBackground from "../../Components/splash/SplashBackground";
-import icon from "../../assets/icon.png";
+import appIcon from "../../assets/app-icon.png";
 import { INTRO_CTA_DELAY_MS } from "../../theme/splashTiming";
 
 const { width: SCREEN_W } = Dimensions.get("window");
@@ -38,7 +38,15 @@ const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 const GRADIENT_COLORS = AUTH_GRADIENTS.screen;
 const GRADIENT_LOCATIONS = AUTH_GRADIENTS.screenLocations;
 
-const FEATURES = ["Carpool", "Courier", "Community"];
+const TAGLINE = "Ride together. Pay less.";
+const CAPTION =
+  "Carpool with neighbors, send parcels on shared trips, and split every fare.";
+
+const FEATURES = [
+  { icon: "car-sport-outline", label: "Carpool" },
+  { icon: "cube-outline", label: "Courier" },
+  { icon: "people-outline", label: "Community" },
+];
 
 const SplashScreen = ({ mode = "intro" }) => {
   const navigation = useNavigation();
@@ -47,7 +55,6 @@ const SplashScreen = ({ mode = "intro" }) => {
   const [ctaReady, setCtaReady] = useState(isBootstrap);
 
   const logoEnter = useSharedValue(0);
-  const shimmer = useSharedValue(0);
   const btnScale = useSharedValue(1);
   const progressWidth = useSharedValue(0.15);
 
@@ -61,17 +68,6 @@ const SplashScreen = ({ mode = "intro" }) => {
 
   useEffect(() => {
     logoEnter.value = withSpring(1, { damping: 14, stiffness: 90 });
-    shimmer.value = withDelay(
-      600,
-      withRepeat(
-        withSequence(
-          withTiming(1, { duration: 2200, easing: Easing.inOut(Easing.ease) }),
-          withTiming(0, { duration: 2200, easing: Easing.inOut(Easing.ease) })
-        ),
-        -1,
-        false
-      )
-    );
     progressWidth.value = withRepeat(
       withSequence(
         withTiming(0.92, { duration: 2200, easing: Easing.inOut(Easing.cubic) }),
@@ -80,18 +76,14 @@ const SplashScreen = ({ mode = "intro" }) => {
       -1,
       false
     );
-  }, [logoEnter, progressWidth, shimmer]);
+  }, [logoEnter, progressWidth]);
 
-  const logoClusterStyle = useAnimatedStyle(() => ({
+  const logoWrapStyle = useAnimatedStyle(() => ({
     opacity: logoEnter.value,
     transform: [
-      { scale: interpolate(logoEnter.value, [0, 1], [0.88, 1]) },
-      { translateY: interpolate(logoEnter.value, [0, 1], [24, 0]) },
+      { scale: interpolate(logoEnter.value, [0, 1], [0.9, 1]) },
+      { translateY: interpolate(logoEnter.value, [0, 1], [18, 0]) },
     ],
-  }));
-
-  const shimmerStyle = useAnimatedStyle(() => ({
-    opacity: interpolate(shimmer.value, [0, 1], [0.35, 0.85]),
   }));
 
   const btnAnimStyle = useAnimatedStyle(() => ({
@@ -137,51 +129,56 @@ const SplashScreen = ({ mode = "intro" }) => {
 
         <View
           style={[
-            styles.safeContent,
-            { paddingTop: insets.top + scale(12), paddingBottom: insets.bottom + scale(16) },
+            styles.content,
+            {
+              paddingTop: insets.top + scale(12),
+              paddingBottom: insets.bottom + scale(14),
+            },
           ]}
         >
-          {/* Brand hero */}
           <View style={styles.hero}>
-            <Animated.View style={[styles.logoCluster, logoClusterStyle]}>
-              <Animated.View style={[styles.logoHalo, shimmerStyle]} />
-              <LinearGradient
-                colors={["rgba(255,255,255,0.35)", "rgba(255,255,255,0.12)"]}
-                style={styles.logoCard}
-              >
-                <Image source={icon} style={styles.logoImage} resizeMode="contain" />
-              </LinearGradient>
+            <Animated.View style={[styles.logoStage, logoWrapStyle]}>
+              <View style={styles.logoCard}>
+                <Image source={appIcon} style={styles.logo} resizeMode="cover" />
+              </View>
             </Animated.View>
 
             <Animated.Text
-              entering={FadeInDown.delay(280).duration(500)}
+              entering={FadeInDown.delay(260).duration(500)}
               style={styles.brandName}
             >
               Share Wheels
             </Animated.Text>
 
             <Animated.Text
-              entering={FadeInDown.delay(420).duration(500)}
+              entering={FadeInDown.delay(380).duration(500)}
               style={styles.tagline}
             >
-              Share rides. Save money. Travel smarter.
+              {TAGLINE}
+            </Animated.Text>
+
+            <Animated.Text
+              entering={FadeInDown.delay(480).duration(500)}
+              style={styles.caption}
+            >
+              {CAPTION}
             </Animated.Text>
 
             <Animated.View
-              entering={FadeIn.delay(520).duration(400)}
+              entering={FadeIn.delay(560).duration(450)}
               style={styles.featureRow}
             >
-              {FEATURES.map((label) => (
-                <View key={label} style={styles.featurePill}>
-                  <Text style={styles.featureText}>{label}</Text>
+              {FEATURES.map((item) => (
+                <View key={item.label} style={styles.featurePill}>
+                  <Icon name={item.icon} size={13} color="rgba(255,255,255,0.95)" />
+                  <Text style={styles.featureText}>{item.label}</Text>
                 </View>
               ))}
             </Animated.View>
           </View>
 
-          {/* Footer panel */}
           <Animated.View
-            entering={FadeInUp.delay(isBootstrap ? 300 : 900).duration(450)}
+            entering={FadeInUp.delay(isBootstrap ? 300 : 880).duration(450)}
             style={styles.footerPanel}
           >
             {isBootstrap ? (
@@ -200,7 +197,7 @@ const SplashScreen = ({ mode = "intro" }) => {
                 style={[styles.ctaButton, btnAnimStyle]}
               >
                 <LinearGradient
-                  colors={["#FFFFFF", "#F8FAFC"]}
+                  colors={["#FFFFFF", "#F1F5F9"]}
                   style={styles.ctaInner}
                 >
                   <Text style={styles.ctaText}>Get Started</Text>
@@ -219,7 +216,7 @@ const SplashScreen = ({ mode = "intro" }) => {
               </View>
             )}
 
-            <Text style={styles.versionNote}>Ride sharing made simple</Text>
+            <Text style={styles.footerNote}>Smart mobility for everyday travel</Text>
           </Animated.View>
         </View>
       </LinearGradient>
@@ -232,62 +229,61 @@ export default SplashScreen;
 const styles = StyleSheet.create({
   screen: { flex: 1 },
   gradient: { flex: 1 },
-  safeContent: {
+  content: {
     flex: 1,
+    paddingHorizontal: LAYOUT.spacing.lg,
     justifyContent: "space-between",
   },
   hero: {
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
-    paddingHorizontal: LAYOUT.spacing.xl,
-    paddingBottom: verticalScale(8),
   },
-  logoCluster: {
+  logoStage: {
     alignItems: "center",
     justifyContent: "center",
-    marginBottom: scale(28),
-  },
-  logoHalo: {
-    position: "absolute",
-    width: scale(200),
-    height: scale(200),
-    borderRadius: scale(100),
-    backgroundColor: "rgba(255,255,255,0.2)",
+    marginBottom: scale(24),
   },
   logoCard: {
-    width: scale(132),
-    height: scale(132),
-    borderRadius: scale(36),
-    alignItems: "center",
-    justifyContent: "center",
+    width: scale(168),
+    height: scale(168),
+    borderRadius: scale(46),
+    overflow: "hidden",
     borderWidth: 1.5,
     borderColor: "rgba(255,255,255,0.55)",
+    backgroundColor: "transparent",
     shadowColor: "#0F172A",
-    shadowOffset: { width: 0, height: 16 },
-    shadowOpacity: 0.35,
-    shadowRadius: 24,
-    elevation: 16,
+    shadowOffset: { width: 0, height: 12 },
+    shadowOpacity: 0.28,
+    shadowRadius: 18,
+    elevation: 12,
   },
-  logoImage: {
-    width: scale(80),
-    height: scale(80),
+  logo: {
+    width: "100%",
+    height: "100%",
   },
   brandName: {
-    fontSize: Math.min(moderateScale(32), 36),
+    fontSize: Math.min(moderateScale(34), 38),
     fontWeight: "800",
     color: "#FFFFFF",
     letterSpacing: 0.5,
     textAlign: "center",
-    marginBottom: scale(10),
+    marginBottom: scale(8),
   },
   tagline: {
-    fontSize: LAYOUT.font.body + 1,
-    color: "rgba(255,255,255,0.88)",
+    fontSize: LAYOUT.font.section,
+    fontWeight: "700",
+    color: "rgba(255,255,255,0.96)",
+    textAlign: "center",
+    marginBottom: scale(10),
+  },
+  caption: {
+    fontSize: LAYOUT.font.body,
+    color: "rgba(255,255,255,0.82)",
     textAlign: "center",
     lineHeight: scale(22),
-    maxWidth: SCREEN_W * 0.82,
-    marginBottom: scale(20),
+    maxWidth: SCREEN_W * 0.86,
+    marginBottom: scale(18),
   },
   featureRow: {
     flexDirection: "row",
@@ -296,35 +292,36 @@ const styles = StyleSheet.create({
     gap: scale(8),
   },
   featurePill: {
-    paddingHorizontal: scale(14),
-    paddingVertical: scale(6),
+    flexDirection: "row",
+    alignItems: "center",
+    gap: scale(5),
+    paddingHorizontal: scale(12),
+    paddingVertical: scale(7),
     borderRadius: scale(20),
-    backgroundColor: "rgba(255,255,255,0.14)",
+    backgroundColor: "rgba(255,255,255,0.12)",
     borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.28)",
+    borderColor: "rgba(255,255,255,0.22)",
   },
   featureText: {
     fontSize: LAYOUT.font.small,
     fontWeight: "600",
     color: "rgba(255,255,255,0.95)",
-    letterSpacing: 0.3,
   },
   footerPanel: {
-    marginHorizontal: LAYOUT.spacing.lg,
-    paddingHorizontal: LAYOUT.spacing.lg,
-    paddingTop: LAYOUT.spacing.lg,
-    paddingBottom: LAYOUT.spacing.md,
+    paddingHorizontal: LAYOUT.spacing.md,
+    paddingTop: LAYOUT.spacing.md,
+    paddingBottom: LAYOUT.spacing.sm,
     borderRadius: LAYOUT.radius.xl,
-    backgroundColor: "rgba(255,255,255,0.1)",
+    backgroundColor: "rgba(255,255,255,0.08)",
     borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.2)",
+    borderColor: "rgba(255,255,255,0.16)",
   },
   ctaButton: {
     borderRadius: scale(16),
     overflow: "hidden",
     shadowColor: "#0F172A",
     shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.2,
+    shadowOpacity: 0.22,
     shadowRadius: 12,
     elevation: 6,
   },
@@ -332,8 +329,8 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    paddingVertical: scale(17),
-    paddingHorizontal: scale(24),
+    paddingVertical: scale(16),
+    paddingHorizontal: scale(22),
     gap: scale(10),
   },
   ctaText: {
@@ -364,13 +361,13 @@ const styles = StyleSheet.create({
     fontSize: LAYOUT.font.section,
     fontWeight: "700",
     textAlign: "center",
-    marginBottom: scale(12),
+    marginBottom: scale(10),
   },
   bootSub: {
     color: "rgba(255,255,255,0.75)",
     fontSize: LAYOUT.font.small,
     textAlign: "center",
-    marginTop: scale(10),
+    marginTop: scale(8),
   },
   progressTrack: {
     height: scale(4),
@@ -385,11 +382,11 @@ const styles = StyleSheet.create({
     backgroundColor: "#FFFFFF",
     transformOrigin: "left",
   },
-  versionNote: {
-    marginTop: scale(14),
+  footerNote: {
+    marginTop: scale(12),
     fontSize: LAYOUT.font.tiny,
-    color: "rgba(255,255,255,0.5)",
+    color: "rgba(255,255,255,0.45)",
     textAlign: "center",
-    letterSpacing: 0.8,
+    letterSpacing: 0.6,
   },
 });

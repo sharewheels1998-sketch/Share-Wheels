@@ -2,10 +2,10 @@ apply plugin: "com.android.application"
 apply plugin: "org.jetbrains.kotlin.android"
 apply plugin: "com.facebook.react"
 
-// Release APK uses .env.production (production URL). Debug uses local .env.
+// Debug + release both use `.env` (release always uses PRODUCTION_URL — see Config.js).
 project.ext.envConfigFiles = [
     debug: ".env",
-    release: ".env.production",
+    release: ".env",
 ]
 apply from: project(':react-native-config').projectDir.getPath() + "/dotenv.gradle"
 

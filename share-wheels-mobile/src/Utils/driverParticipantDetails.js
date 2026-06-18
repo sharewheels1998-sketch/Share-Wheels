@@ -127,8 +127,6 @@ export const buildEnrouteDetail = (item, from, to, date) => {
         { label: "Courier Type", value: raw.courier_type },
         { label: "Sender Gender", value: raw.gender || item?.gender },
         { label: "Receiver Name", value: recv?.name },
-        { label: "Receiver Mobile", value: recv?.mobile },
-        { label: "Receiver Alt. Mobile", value: recv?.alternate_mobile },
         { label: "Receiver Address", value: recv?.Address || recv?.address },
         { label: "Request Type", value: raw.request_type },
         { label: "Status", value: raw.courier_status },

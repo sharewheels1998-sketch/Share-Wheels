@@ -536,14 +536,45 @@ const UpcomingDetailsPage = ({ route }) => {
 
   const participantTabs = useMemo(() => {
     const tabs = ["All", "Passengers", "Couriers"];
-    if (!quickReserve) {
+    const hasPending =
+      passengerRequests.length > 0 || courierRequests.length > 0;
+    if (!quickReserve || hasPending) {
       tabs.push("Pax requests", "Courier requests");
     }
     return tabs;
-  }, [quickReserve]);
+  }, [quickReserve, passengerRequests.length, courierRequests.length]);
 
   const pendingRequestCount =
     passengerRequests.length + courierRequests.length;
+
+  const participantTotal = passengers.length + couriers.length;
+
+  const resolveParticipantsTabIndex = useCallback(
+    (intent = "default") => {
+      const paxIdx = participantTabs.indexOf("Pax requests");
+      const courierIdx = participantTabs.indexOf("Courier requests");
+
+      if (intent === "pending") {
+        if (passengerRequests.length > 0 && paxIdx >= 0) return paxIdx;
+        if (courierRequests.length > 0 && courierIdx >= 0) return courierIdx;
+        return 0;
+      }
+
+      if (pendingRequestCount > 0 && participantTotal === 0) {
+        if (passengerRequests.length > 0 && paxIdx >= 0) return paxIdx;
+        if (courierRequests.length > 0 && courierIdx >= 0) return courierIdx;
+      }
+
+      return 0;
+    },
+    [
+      participantTabs,
+      passengerRequests.length,
+      courierRequests.length,
+      pendingRequestCount,
+      participantTotal,
+    ]
+  );
 
   /** Courier role: only this user's parcel — not every delivery on the ride. */
   const myCourierParcels = useMemo(() => {
@@ -573,12 +604,16 @@ const UpcomingDetailsPage = ({ route }) => {
   );
 
   const openParticipantsSlider = useCallback(
-    (tabIndex = 0) => {
+    (tabIndex) => {
+      const resolved =
+        typeof tabIndex === "number"
+          ? tabIndex
+          : resolveParticipantsTabIndex(tabIndex || "default");
       const max = Math.max(0, participantTabs.length - 1);
-      setParticipantTabIndex(Math.min(Math.max(0, tabIndex), max));
+      setParticipantTabIndex(Math.min(Math.max(0, resolved), max));
       setActiveSlider("participants");
     },
-    [participantTabs.length]
+    [participantTabs.length, resolveParticipantsTabIndex]
   );
 
   useEffect(() => {
@@ -1479,8 +1514,8 @@ const UpcomingDetailsPage = ({ route }) => {
               courierCount={couriers.length}
               pendingCount={pendingRequestCount}
               quickReserve={quickReserve}
-              onOpen={() => openParticipantsSlider(0)}
-              onOpenPending={() => openParticipantsSlider(2)}
+              onOpen={() => openParticipantsSlider("default")}
+              onOpenPending={() => openParticipantsSlider("pending")}
             />
 
             <DriverEnrouteHub
@@ -1488,10 +1523,10 @@ const UpcomingDetailsPage = ({ route }) => {
               courierCount={enrouteRequests.counts.couriers}
               loading={enrouteRequests.loading}
               picksRemaining={driverSubscription?.picksRemaining}
-              ridesRemaining={driverSubscription?.ridesRemaining}
-              isFreePlan={driverSubscription?.isFree}
               unlimitedPicks={driverSubscription?.unlimitedPicks}
               planName={driverSubscription?.plan?.name}
+              subscriptionActive={driverSubscription?.isActive !== false}
+              isDeactivated={!!driverSubscription?.isDeactivated}
               onOpen={() => {
                 enrouteRequests.refresh();
                 loadDriverSubscription();

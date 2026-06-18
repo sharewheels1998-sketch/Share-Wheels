@@ -1,20 +1,20 @@
 /**
  * Must be imported before AppRegistry (see index.js).
- * Data-only FCM messages in background; skip when system already shows notification payload.
+ * Shows tray notifications via Notifee for background / headless FCM delivery.
  */
 import {
   getFCMMessaging,
   setBackgroundMessageHandler,
 } from "./firebaseMessaging";
-import { displayForegroundNotification } from "./displayLocalNotification";
+import {
+  displayForegroundNotification,
+  ensureNotificationChannel,
+} from "./displayLocalNotification";
 
 setBackgroundMessageHandler(getFCMMessaging(), async (remoteMessage) => {
-  if (remoteMessage?.notification?.title) {
-    return;
-  }
-
   try {
-    await displayForegroundNotification(remoteMessage);
+    await ensureNotificationChannel();
+    await displayForegroundNotification(remoteMessage, { source: "background" });
   } catch (e) {
     if (__DEV__) {
       console.warn("[FCM] background display:", e?.message || e);

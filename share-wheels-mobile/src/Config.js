@@ -5,7 +5,7 @@ import { DEV_API_URL } from "./devConfig";
 const trimUrl = (url) => (url ? String(url).trim().replace(/\/$/, "") : "");
 
 const PRODUCTION_URL =
-  trimUrl(Env.PRODUCTION_URL) || "https://new-sw-project.onrender.com";
+  trimUrl(Env.PRODUCTION_URL) || "https://sharewheels-backend.onrender.com";
 
 /** Android emulator → host machine. iOS simulator → localhost. */
 const getPlatformDefaultLocalUrl = () => {

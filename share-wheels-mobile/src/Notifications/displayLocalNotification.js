@@ -1,6 +1,10 @@
 import { Platform } from "react-native";
-import notifee, { AndroidImportance, EventType } from "@notifee/react-native";
+import notifee, { AndroidImportance, AndroidStyle, EventType } from "@notifee/react-native";
 import { CHANNELS, resolveNotificationChannel } from "./notificationChannels";
+import {
+  buildDedupeKey,
+  shouldSkipDuplicateNotification,
+} from "./notificationDedupe";
 
 let channelsReady = false;
 
@@ -34,47 +38,109 @@ export async function ensureNotificationChannel() {
   channelsReady = true;
 }
 
+const TYPE_LABELS = {
+  passenger_request: "Passenger request",
+  courier_request: "Courier request",
+  passenger_joined: "New passenger",
+  courier_joined: "New courier",
+  ride_accept: "Request accepted",
+  ride_reject: "Request declined",
+  chat_message: "New message",
+  ride_start_reminder: "Ride reminder",
+  boarding_otp_issued: "Boarding OTP",
+};
+
+/** Notifee requires id to be a non-empty string (no bare "0"). */
+const sanitizeNotificationId = (raw) => {
+  const cleaned = String(raw ?? "")
+    .trim()
+    .replace(/[^a-zA-Z0-9_-]/g, "_")
+    .slice(0, 64);
+  if (cleaned && cleaned !== "0") return cleaned;
+  return `sw_${Date.now()}`;
+};
+
+/** All data payload values must be strings for Notifee / FCM. */
+const sanitizeData = (data = {}) => {
+  const out = {};
+  Object.entries(data || {}).forEach(([key, value]) => {
+    if (!key || key === "notifee_options") return;
+    if (value == null) {
+      out[String(key)] = "";
+      return;
+    }
+    out[String(key)] = typeof value === "string" ? value : String(value);
+  });
+  return out;
+};
+
 const buildDisplayPayload = (remoteMessage) => {
-  const data = remoteMessage?.data || {};
+  const data = sanitizeData(remoteMessage?.data || {});
   const type = data.type || "general";
-  const title =
-    remoteMessage?.notification?.title || data.title || "Share Wheels";
-  const body =
-    remoteMessage?.notification?.body || data.body || "";
+  const title = String(
+    remoteMessage?.notification?.title || data.title || "Share Wheels"
+  );
+  const body = String(remoteMessage?.notification?.body || data.body || "");
   const rideId = data.rideId ? String(data.rideId) : "";
-  const notificationId =
-    data.notificationId || data.passengerRideId || data.courierId || "";
+  const notificationId = data.notificationId
+    ? String(data.notificationId)
+    : data.passengerRideId
+      ? String(data.passengerRideId)
+      : data.courierId
+        ? String(data.courierId)
+        : "";
 
   return { data, type, title, body, rideId, notificationId };
 };
 
 /**
- * Show a tray notification (foreground / data-only background).
+ * Show a tray notification (foreground / background FCM).
+ * @param {object} remoteMessage
+ * @param {{ source?: 'foreground' | 'background' }} options
  */
-export async function displayForegroundNotification(remoteMessage) {
+export async function displayForegroundNotification(remoteMessage, options = {}) {
   const { data, type, title, body, rideId, notificationId } =
     buildDisplayPayload(remoteMessage);
 
-  await ensureNotificationChannel();
+  if (!title && !body) return;
 
+  const id = sanitizeNotificationId(
+    notificationId || `${type}_${rideId || "general"}`
+  );
+  const dedupeKey = buildDedupeKey(remoteMessage, id);
+  if (shouldSkipDuplicateNotification(dedupeKey)) {
+    if (__DEV__) {
+      console.log("[FCM] skip duplicate tray:", dedupeKey, options.source || "foreground");
+    }
+    return;
+  }
+
+  await ensureNotificationChannel();
   const channelId = resolveNotificationChannel(type);
-  const tag = notificationId || `${type}-${rideId || "general"}`;
+  const typeLabel = TYPE_LABELS[type] || "Share Wheels";
+  const safeBody = body || title;
 
   await notifee.displayNotification({
-    id: tag,
+    id,
     title,
-    body,
+    body: safeBody,
+    subtitle: Platform.OS === "ios" ? typeLabel : undefined,
     data,
     android: {
       channelId,
-      tag,
-      groupId: rideId || "share_wheels_general",
-      pressAction: { id: "default" },
       smallIcon: "ic_notification",
-      largeIcon: "ic_launcher",
       color: "#2563EB",
-      importance: AndroidImportance.HIGH,
+      tag: id,
+      pressAction: { id: "default" },
       autoCancel: true,
+      ...(safeBody.length > 80
+        ? {
+            style: {
+              type: AndroidStyle.BIGTEXT,
+              text: safeBody,
+            },
+          }
+        : {}),
     },
     ios: {
       threadId: rideId || "share_wheels",
