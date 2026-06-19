@@ -31,6 +31,7 @@ const {
   emitRideRequestUpdated,
 } = require("../utils/socketEmit");
 const { toEnrouteDateKey } = require("../utils/rideDateQueryUtils");
+const { normalizeAllowedVehicleType } = require("../constants/vehicleTypes");
 const {
   closeStandaloneRequestsAfterJoin,
   linkStandalonePassengersForRideRequest,
@@ -1592,9 +1593,30 @@ const userIdOnRideRequests = (ride, userId) => {
   return { passengerPending, courierPending };
 };
 
+const MATCHING_RIDE_CREATOR_SELECT =
+  "name mobile profile_img vehicle.type vehicle.company vehicle.model vehicle.car_no vehicle.car_image";
+
+const resolveMatchingRideVehicle = (ride) => {
+  const fromRide = ride?.vehicle || {};
+  const fromCreator = ride?.creator?.vehicle || {};
+  const type =
+    normalizeAllowedVehicleType(fromRide.type) ||
+    normalizeAllowedVehicleType(fromCreator.type) ||
+    "car";
+
+  return {
+    type,
+    company: String(fromRide.company || fromCreator.company || "").trim(),
+    model: String(fromRide.model || fromCreator.model || "").trim(),
+    car_no: String(fromRide.car_no || fromCreator.car_no || "").trim(),
+    car_image: String(fromRide.car_image || fromCreator.car_image || "").trim(),
+  };
+};
+
 const serializeMatchingRide = (ride, userId) => {
   if (!ride) return null;
   const { passengerPending, courierPending } = userIdOnRideRequests(ride, userId);
+  const vehicle = resolveMatchingRideVehicle(ride);
   return {
     _id: ride._id,
     from: ride.from,
@@ -1606,7 +1628,8 @@ const serializeMatchingRide = (ride, userId) => {
     status: ride.status,
     CanCarryCourier: !!ride.CanCarryCourier,
     QuickReserve: !!ride.QuickReserve,
-    vehicle: ride.vehicle,
+    vehicle,
+    vehicleType: vehicle.type,
     stopovers: ride.stopovers || [],
     routePolyline: ride.routePolyline || "",
     routeDistanceMeters: ride.routeDistanceMeters ?? null,
@@ -1679,7 +1702,7 @@ const findMatchingRidesForRequest = async ({
 
   const candidates = await Ride.find(filter)
     .select(MATCHING_RIDE_SELECT)
-    .populate("creator", "name mobile profile_img")
+    .populate("creator", MATCHING_RIDE_CREATOR_SELECT)
     .sort({ date: 1, startTime: 1 })
     .limit(25)
     .lean();
@@ -1703,7 +1726,7 @@ const fetchLinkedRide = async (rideId, userId) => {
   if (!rideId) return null;
   const ride = await Ride.findById(rideId)
     .select(MATCHING_RIDE_SELECT)
-    .populate("creator", "name mobile profile_img")
+    .populate("creator", MATCHING_RIDE_CREATOR_SELECT)
     .lean();
   if (!ride) return null;
 

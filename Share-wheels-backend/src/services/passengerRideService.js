@@ -96,6 +96,9 @@ const getOpenRequests = async (user) => {
 
 const driverSubscriptionService = require("./driverSubscriptionService");
 
+const ENROUTE_REQUEST_UNAVAILABLE_MESSAGE =
+  "This request is no longer available. It may have already been picked by another driver.";
+
 const pickPassenger = async (user, { passenger_rideId, rideId }) => {
   if (!passenger_rideId || !rideId) {
     return { status: 400, body: { message: "passenger_rideId and rideId are required" } };
@@ -125,18 +128,41 @@ const pickPassenger = async (user, { passenger_rideId, rideId }) => {
   }
 
   const passengerRide = await PassengerRide.findById(passenger_rideId);
-  if (!passengerRide) return { status: 404, body: { message: "Passenger not found" } };
+  if (!passengerRide) {
+    return {
+      status: 404,
+      body: {
+        success: false,
+        message: ENROUTE_REQUEST_UNAVAILABLE_MESSAGE,
+        code: "ALREADY_PICKED",
+      },
+    };
+  }
   if (passengerRide.creator.toString() === user._id.toString()) return { status: 400, body: { message: "You cannot pick your own request" } };
   if (passengerRide.status === "expired") {
     return { status: 400, body: { message: "This passenger request has expired" } };
   }
   if (passengerRide.status !== "pending") {
-    return { status: 400, body: { message: LOCKED_TO_OTHER_DRIVER_MESSAGE } };
+    return {
+      status: 409,
+      body: {
+        success: false,
+        message: LOCKED_TO_OTHER_DRIVER_MESSAGE,
+        code: "ALREADY_PICKED",
+      },
+    };
   }
 
   const lockedRideId = resolvePassengerLockedRideId(passengerRide);
   if (lockedRideId && lockedRideId !== String(rideId)) {
-    return { status: 400, body: { message: LOCKED_TO_OTHER_DRIVER_MESSAGE } };
+    return {
+      status: 409,
+      body: {
+        success: false,
+        message: LOCKED_TO_OTHER_DRIVER_MESSAGE,
+        code: "ALREADY_PICKED",
+      },
+    };
   }
 
   let ride = await Ride.findById(rideId);
@@ -176,8 +202,12 @@ const pickPassenger = async (user, { passenger_rideId, rideId }) => {
   );
   if (!claimedPassengerRide) {
     return {
-      status: 400,
-      body: { message: "This request is already picked by another driver" },
+      status: 409,
+      body: {
+        success: false,
+        message: LOCKED_TO_OTHER_DRIVER_MESSAGE,
+        code: "ALREADY_PICKED",
+      },
     };
   }
 

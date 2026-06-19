@@ -958,16 +958,13 @@ export const pickPassengerApi = async (token, payload) => {
       };
     }
 
-    return {
-      success: true,
-      ...data,
-    };
+    return { success: true, ...data };
   } catch (error) {
     console.log("❌ Passenger API Error:", error);
 
     return {
       success: false,
-      message: "Network error",
+      message: error?.message || "Network error",
     };
   }
 };

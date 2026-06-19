@@ -16,6 +16,7 @@ const {
   collectAssignedRequestDocIds,
   dedupeEnrouteRequestsByRequestId,
   resolveCourierLockedRideId,
+  resolvePassengerLockedRideId,
   LOCKED_TO_OTHER_DRIVER_MESSAGE,
 } = require("../utils/participantRequestCleanup");
 const {
@@ -40,6 +41,22 @@ const {
   getActiveRideRowById,
 } = require("./rideTrackingService");
 const { expireStaleOpenRequests, OPEN_PASSENGER_FILTER, OPEN_COURIER_FILTER } = require("./requestExpiryService");
+
+const isPassengerOpenForDriverEnroute = (doc, driverRideId) => {
+  if (!doc || doc.status !== "pending") return false;
+  const lockedRideId = resolvePassengerLockedRideId(doc);
+  if (!lockedRideId) return true;
+  return !!(driverRideId && lockedRideId === String(driverRideId));
+};
+
+const isCourierOpenForDriverEnroute = (doc, driverRideId) => {
+  if (!doc) return false;
+  const status = String(doc.courier_status || "");
+  if (!["pending", "request_to_driver"].includes(status)) return false;
+  const lockedRideId = resolveCourierLockedRideId(doc);
+  if (!lockedRideId) return true;
+  return !!(driverRideId && lockedRideId === String(driverRideId));
+};
 const { clearRideChatMessages } = require("./rideChatService");
 const { withRidePickLock } = require("../utils/ridePickLock");
 const {
@@ -509,6 +526,9 @@ const enrouteRequests = async (user, { from, to, date, rideId, stopovers, routeP
   const matchesCorridor = (reqFrom, reqTo) =>
     requestMatchesDriverCorridor(reqFrom, reqTo, corridor, fromTrim, toTrim);
 
+  const driverRideIdStr =
+    rideId && mongoose.Types.ObjectId.isValid(rideId) ? String(rideId) : null;
+
   const passengers = await PassengerRide.find({
     ...OPEN_PASSENGER_FILTER,
     creator: { $ne: user._id },
@@ -522,6 +542,7 @@ const enrouteRequests = async (user, { from, to, date, rideId, stopovers, routeP
     .filter(
       (p) =>
         !excludePassengerRideIds.has(String(p._id)) &&
+        isPassengerOpenForDriverEnroute(p, driverRideIdStr) &&
         matchesCorridor(p.from, p.to)
     )
     .map((p) => ({
@@ -553,6 +574,7 @@ const enrouteRequests = async (user, { from, to, date, rideId, stopovers, routeP
     .filter(
       (c) =>
         !excludeCourierIds.has(String(c._id)) &&
+        isCourierOpenForDriverEnroute(c, driverRideIdStr) &&
         matchesCorridor(c.from, c.to)
     )
     .map((c) => ({
@@ -619,19 +641,37 @@ const pickCourier = async (user, { rideId, courierId }) => {
   let ride = await Ride.findById(rideId);
   if (!ride) return { status: 404, body: { success: false, message: "Ride not found" } };
   const courier = await Courier.findById(courierId);
-  if (!courier) return { status: 404, body: { success: false, message: "Courier not found" } };
+  if (!courier) {
+    return {
+      status: 404,
+      body: {
+        success: false,
+        message:
+          "This request is no longer available. It may have already been picked by another driver.",
+        code: "ALREADY_PICKED",
+      },
+    };
+  }
   if (courier.courier_status !== "pending" && courier.courier_status !== "request_to_driver") {
     return {
-      status: 400,
-      body: { success: false, message: LOCKED_TO_OTHER_DRIVER_MESSAGE },
+      status: 409,
+      body: {
+        success: false,
+        message: LOCKED_TO_OTHER_DRIVER_MESSAGE,
+        code: "ALREADY_PICKED",
+      },
     };
   }
 
   const lockedRideId = resolveCourierLockedRideId(courier);
   if (lockedRideId && lockedRideId !== String(rideId)) {
     return {
-      status: 400,
-      body: { success: false, message: LOCKED_TO_OTHER_DRIVER_MESSAGE },
+      status: 409,
+      body: {
+        success: false,
+        message: LOCKED_TO_OTHER_DRIVER_MESSAGE,
+        code: "ALREADY_PICKED",
+      },
     };
   }
 
@@ -674,8 +714,12 @@ const pickCourier = async (user, { rideId, courierId }) => {
   );
   if (!claimedCourier) {
     return {
-      status: 400,
-      body: { success: false, message: LOCKED_TO_OTHER_DRIVER_MESSAGE },
+      status: 409,
+      body: {
+        success: false,
+        message: LOCKED_TO_OTHER_DRIVER_MESSAGE,
+        code: "ALREADY_PICKED",
+      },
     };
   }
 

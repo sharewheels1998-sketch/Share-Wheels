@@ -145,6 +145,24 @@ export const getEnrouteSiblingNote = (item, enrouteData = []) => {
   return `${item.name || "This user"} also has an open ${oppositeType} request. Only one role can be added to your ride.`;
 };
 
+export const ENROUTE_ALREADY_PICKED_MESSAGE =
+  "This request is already picked by another driver.";
+
+export const isEnrouteRequestUnavailableError = (response) => {
+  const code = String(response?.code || "").toUpperCase();
+  if (code === "ALREADY_PICKED") return true;
+
+  const message = String(response?.message || response?.error || "").toLowerCase();
+  return (
+    message.includes("already picked") ||
+    message.includes("another driver") ||
+    message.includes("no longer available") ||
+    message.includes("passenger not found") ||
+    message.includes("courier not found") ||
+    message.includes("request not found")
+  );
+};
+
 export const shouldRemoveEnrouteRow = (row, payload) => {
   if (!payload || !row) return false;
 

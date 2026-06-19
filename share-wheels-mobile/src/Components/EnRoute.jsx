@@ -22,6 +22,8 @@ import {
   filterEnrouteByParticipants,
   getEnroutePickConflict,
   getEnrouteSiblingNote,
+  ENROUTE_ALREADY_PICKED_MESSAGE,
+  isEnrouteRequestUnavailableError,
 } from "../Utils/enrouteRequestUtils";
 import { useEnrouteRequests } from "../hooks/useEnrouteRequests";
 
@@ -495,12 +497,25 @@ const EnRoutePassengers = ({
           );
         } else if (response?.code && onSubscriptionRequired) {
           onSubscriptionRequired(response);
+        } else if (isEnrouteRequestUnavailableError(response)) {
+          removeItem?.(item.id);
+          onRefresh?.();
+          Alert.alert("Already picked", ENROUTE_ALREADY_PICKED_MESSAGE);
         } else {
           Alert.alert("Error", response?.message || "Failed");
         }
       } catch (error) {
         console.log("Pick enroute error:", error);
-        Alert.alert("Error", "Something went wrong");
+        const unavailable = isEnrouteRequestUnavailableError({
+          message: error?.message,
+        });
+        if (unavailable) {
+          removeItem?.(item.id);
+          onRefresh?.();
+          Alert.alert("Already picked", ENROUTE_ALREADY_PICKED_MESSAGE);
+        } else {
+          Alert.alert("Error", error?.message || "Something went wrong");
+        }
       } finally {
         pickInFlightRef.current = false;
         setPickQueueBusy(false);
@@ -513,6 +528,8 @@ const EnRoutePassengers = ({
       onSubscriptionRequired,
       participantUserIds,
       closePopover,
+      removeItem,
+      onRefresh,
     ]
   );
 
