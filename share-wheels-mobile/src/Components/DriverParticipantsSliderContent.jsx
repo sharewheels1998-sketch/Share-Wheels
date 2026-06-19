@@ -61,6 +61,7 @@ const RequestCard = ({
   name,
   lines,
   fare,
+  fareLabel = "Offer",
   role,
   onAccept,
   onDecline,
@@ -92,7 +93,7 @@ const RequestCard = ({
       </View>
       <View style={styles.requestFooter}>
         <View style={styles.farePill}>
-          <Text style={styles.farePillLabel}>Offer</Text>
+          <Text style={styles.farePillLabel}>{fareLabel}</Text>
           <Text style={styles.farePillValue}>₹{fare}</Text>
         </View>
         <View style={styles.requestBtnRow}>
@@ -280,7 +281,7 @@ const DriverParticipantsSliderContent = ({
       case "Courier requests":
         if (!courierRequests.length) return [{ key: "empty", type: "empty" }];
         return courierRequests.map((item, i) => ({
-          key: item._id || `cr-${i}`,
+          key: item._id || item.userId?._id || `cr-${i}`,
           type: "courierRequest",
           item,
         }));
@@ -440,8 +441,10 @@ const DriverParticipantsSliderContent = ({
             user={item?.userId}
             name={item?.userId?.name || "Passenger"}
             role="passenger"
+            fareLabel="Fare"
             fare={getPassengerFare(item)}
             lines={[
+              `${item?.from || rideFrom || "—"} → ${item?.to || rideTo || "—"}`,
               `${item?.userId?.gender || "N/A"} · ${item?.requires_seats || 1} seat(s)`,
               item?.userId?.email || "No email",
             ]}
@@ -455,18 +458,31 @@ const DriverParticipantsSliderContent = ({
       if (row.type === "courierRequest") {
         const item = row.item;
         const user = getUser(item);
+        const requestId = item?._id || item?.id;
+        const fare = getCourierFare(item);
+        const suggested = Number(item?.suggestedSegmentFare);
         return (
           <RequestCard
             user={user}
             name={user?.name || "Courier"}
             role="courier"
-            fare={getCourierFare(item)}
-            lines={[formatCourierParcelLine(item), user?.email || "No email"]}
-            onAccept={() => onAcceptCourier(item._id)}
-            onDecline={() => onRejectCourier(item._id)}
+            fareLabel="Offer"
+            fare={fare}
+            lines={[
+              `${item?.from || rideFrom || "—"} → ${item?.to || rideTo || "—"}`,
+              formatCourierParcelLine(item),
+              user?.email || "No email",
+            ]}
+            onAccept={() => requestId && onAcceptCourier(requestId)}
+            onDecline={() => requestId && onRejectCourier(requestId)}
             styles={styles}
             colors={colors}
           >
+            {Number.isFinite(suggested) && suggested > 0 && suggested !== fare ? (
+              <Text style={styles.requestLine}>
+                Admin segment fare: ₹{suggested}
+              </Text>
+            ) : null}
             <CourierParcelPreview courier={item} compact />
           </RequestCard>
         );
@@ -478,6 +494,7 @@ const DriverParticipantsSliderContent = ({
       colors,
       emptyCopy,
       rideFrom,
+      rideTo,
       rideStatus,
       isRideStarted,
       onVerifyPassenger,

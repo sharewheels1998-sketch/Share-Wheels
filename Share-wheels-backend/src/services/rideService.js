@@ -1375,15 +1375,22 @@ const getRideDetails = async (rideId, viewerId) => {
     ride = stale.ride || ride;
   }
 
-  const passengers = (ride.passengers || []).map((p) => sanitizeParticipant(p, viewerId));
-  const all_deliveries = (ride.all_deliveries || []).map((c) => sanitizeParticipant(c, viewerId));
+  const toPlain = (entry) => (entry?.toObject ? entry.toObject() : { ...entry });
+  const passengers = (ride.passengers || []).map((p) =>
+    sanitizeParticipant(toPlain(p), viewerId)
+  );
+  const all_deliveries = (ride.all_deliveries || []).map((c) =>
+    sanitizeParticipant(toPlain(c), viewerId)
+  );
+  const passenger_requested_ride = (ride.passenger_requested_ride || []).map(toPlain);
+  const users_request_Couriers = (ride.users_request_Couriers || []).map(toPlain);
 
   const enrichedData = await enrichRideDetailsParticipants({
     ...ride.toObject(),
     passengers,
     all_deliveries,
-    passenger_requested_ride: ride.passenger_requested_ride || [],
-    users_request_Couriers: ride.users_request_Couriers || [],
+    passenger_requested_ride,
+    users_request_Couriers,
   });
 
   const verificationParticipants = [

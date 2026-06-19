@@ -1,4 +1,5 @@
 const User = require("../models/userModel");
+const Courier = require("../models/courierModel");
 const { normalizeAllowedVehicleType } = require("../constants/vehicleTypes");
 const { getDirections } = require("./googleMapsService");
 const {
@@ -304,36 +305,97 @@ const resolveParticipantSegment = (ride, participant = {}) => ({
   to: normalizeLabel(participant.to || ride?.to),
 });
 
+const toParticipantPlain = (entry) => (entry?.toObject ? entry.toObject() : { ...entry });
+
+/** Fill missing parcel/route fields from linked standalone Courier doc. */
+const hydrateCourierRequestRecord = async (entry) => {
+  const plain = toParticipantPlain(entry);
+  const hasParcelDetails =
+    plain.courier_type && plain.what_to_deliver && plain.courier_img;
+  if (!plain.courierId || hasParcelDetails) return plain;
+
+  const linked = await Courier.findById(plain.courierId)
+    .select(
+      "from to courier_type what_to_deliver courier_img amount_will courier_receiver_details courierNumber"
+    )
+    .lean();
+  if (!linked) return plain;
+
+  return {
+    ...plain,
+    from: plain.from || linked.from,
+    to: plain.to || linked.to,
+    courier_type: plain.courier_type || linked.courier_type,
+    what_to_deliver: plain.what_to_deliver || linked.what_to_deliver,
+    courier_img: plain.courier_img || linked.courier_img,
+    amount_will: plain.amount_will ?? linked.amount_will,
+    courier_receiver_details:
+      plain.courier_receiver_details || linked.courier_receiver_details,
+    courierNumber: plain.courierNumber || linked.courierNumber,
+  };
+};
+
 /** Apply admin tier segment fare onto a passenger/courier row for API responses. */
-const enrichParticipantRecord = async (ride, participant, role = "passenger") => {
+const enrichParticipantRecord = async (
+  ride,
+  participant,
+  role = "passenger",
+  options = {}
+) => {
   if (!participant || !ride) return participant;
 
+  const plain = toParticipantPlain(participant);
   const enrichedRide = await enrichRideVehicle(ride);
-  const segment = resolveParticipantSegment(enrichedRide, participant);
+  const segment = resolveParticipantSegment(enrichedRide, plain);
   const fare = await resolveSegmentFare(enrichedRide, segment);
   const perSeat = Math.round(Number(fare.perSeat) || 0);
   const seats =
     role === "passenger"
-      ? Math.max(1, Number(participant.requires_seats) || 1)
+      ? Math.max(1, Number(plain.requires_seats) || 1)
       : 1;
   const total = role === "passenger" ? perSeat * seats : perSeat;
 
-  const out = { ...participant, perSeatFare: perSeat, fareHint: fare.fareHint || "" };
-  out.pricingSource = fare.pricingSource;
-  out.resolvedVehicleType = resolveRideVehicleType(enrichedRide);
+  const out = {
+    ...plain,
+    perSeatFare: perSeat,
+    fareHint: fare.fareHint || "",
+    pricingSource: fare.pricingSource,
+    resolvedVehicleType: resolveRideVehicleType(enrichedRide),
+    suggestedSegmentFare:
+      fare.pricingSource === "admin_tiers" && total > 0 ? total : null,
+  };
+
+  const stored =
+    role === "passenger"
+      ? Math.round(Number(plain.ride_amount) || 0)
+      : Math.round(Number(plain.amount_will) || 0);
+
+  // Couriers declare their own price at booking — never replace with admin segment fare.
+  if (role === "courier") {
+    out.displayFare = stored || total || 0;
+    out.computedSegmentFare = stored || total || 0;
+    out.fareSource = stored > 0 ? "courier_offer" : "admin_tiers";
+    if (stored > 0) {
+      out.amount_will = stored;
+      if (total > 0 && total !== stored) {
+        out.fareHint = `Your price ₹${stored}`;
+        out.suggestedSegmentFare = total;
+      }
+    } else if (fare.pricingSource === "admin_tiers" && total > 0) {
+      out.amount_will = total;
+      out.displayFare = total;
+      out.computedSegmentFare = total;
+    }
+    return out;
+  }
 
   if (fare.pricingSource === "admin_tiers" && total > 0) {
     out.computedSegmentFare = total;
     out.displayFare = total;
-    if (role === "passenger") out.ride_amount = total;
-    if (role === "courier") out.amount_will = total;
+    out.ride_amount = total;
     return out;
   }
 
-  const stored =
-    role === "passenger"
-      ? Math.round(Number(participant.ride_amount) || 0)
-      : Math.round(Number(participant.amount_will) || 0);
   out.computedSegmentFare = stored || total;
   out.displayFare = stored || total || 0;
   return out;
@@ -391,6 +453,28 @@ const enrichRideListEntry = async (entry) => {
     resolvedVehicleType: resolveRideVehicleType(enrichedRide),
   };
 
+  const participantAmount =
+    Math.round(Number(participant.amount_will) || 0) ||
+    Math.round(Number(entry.amount_will) || 0);
+  const stored =
+    role === "passenger"
+      ? Math.round(Number(entry.ride_amount) || 0)
+      : Math.round(Number(entry.ride_amount || participantAmount) || 0);
+
+  // Courier bookings use the price declared at booking, not stopover segment tiers.
+  if (role === "courier" && stored > 0) {
+    return {
+      ...base,
+      computedSegmentFare: stored,
+      displayFare: stored,
+      amount_will: stored,
+      ride_amount: stored,
+      fareSource: "courier_offer",
+      suggestedSegmentFare:
+        fare.pricingSource === "admin_tiers" && total > 0 ? total : null,
+    };
+  }
+
   if (fare.pricingSource === "admin_tiers" && total > 0) {
     return {
       ...base,
@@ -401,15 +485,15 @@ const enrichRideListEntry = async (entry) => {
     };
   }
 
-  const stored =
+  const fallbackStored =
     role === "passenger"
       ? Math.round(Number(entry.ride_amount) || 0)
       : Math.round(Number(entry.amount_will || entry.ride_amount) || 0);
 
   return {
     ...base,
-    computedSegmentFare: stored || total,
-    displayFare: stored || total || 0,
+    computedSegmentFare: fallbackStored || total,
+    displayFare: fallbackStored || total || 0,
   };
 };
 
@@ -419,22 +503,34 @@ const enrichRideDetailsParticipants = async (ride) => {
   const base = ride.toObject ? ride.toObject() : { ...ride };
   const enrichedRide = await enrichRideVehicle(base);
 
+  const hydratedCourierRequests = await Promise.all(
+    (base.users_request_Couriers || []).map((c) => hydrateCourierRequestRecord(c))
+  );
+
   const [passengers, all_deliveries, passenger_requested_ride, users_request_Couriers] =
     await Promise.all([
       Promise.all(
-        (base.passengers || []).map((p) => enrichParticipantRecord(enrichedRide, p, "passenger"))
-      ),
-      Promise.all(
-        (base.all_deliveries || []).map((c) => enrichParticipantRecord(enrichedRide, c, "courier"))
-      ),
-      Promise.all(
-        (base.passenger_requested_ride || []).map((p) =>
-          enrichParticipantRecord(enrichedRide, p, "passenger")
+        (base.passengers || []).map((p) =>
+          enrichParticipantRecord(enrichedRide, toParticipantPlain(p), "passenger")
         )
       ),
       Promise.all(
-        (base.users_request_Couriers || []).map((c) =>
-          enrichParticipantRecord(enrichedRide, c, "courier")
+        (base.all_deliveries || []).map((c) =>
+          enrichParticipantRecord(enrichedRide, toParticipantPlain(c), "courier")
+        )
+      ),
+      Promise.all(
+        (base.passenger_requested_ride || []).map((p) =>
+          enrichParticipantRecord(enrichedRide, toParticipantPlain(p), "passenger", {
+            isPendingRequest: true,
+          })
+        )
+      ),
+      Promise.all(
+        hydratedCourierRequests.map((c) =>
+          enrichParticipantRecord(enrichedRide, c, "courier", {
+            isPendingRequest: true,
+          })
         )
       ),
     ]);

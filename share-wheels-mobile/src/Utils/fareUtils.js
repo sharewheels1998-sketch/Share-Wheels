@@ -44,8 +44,15 @@ const pickParticipantFare = (item, storedKeys = []) => {
 export const getPassengerFare = (item) =>
   pickParticipantFare(item, ["ride_amount", "amount", "amount_will"]);
 
-export const getCourierFare = (item) =>
-  pickParticipantFare(item, ["amount_will", "amount", "ride_amount"]);
+export const getCourierFare = (item) => {
+  if (!item) return 0;
+  // User-declared courier price always wins over stopover segment recalculation.
+  const stored = pickStoredAmount(item, ["amount_will", "amount", "ride_amount"]);
+  if (stored > 0) return stored;
+  const displayFare = positiveNumber(item.displayFare);
+  if (displayFare != null) return displayFare;
+  return positiveNumber(item.computedSegmentFare) ?? 0;
+};
 
 /** Ride card / upcoming list by role */
 export const getRideDisplayFare = (ride) => {

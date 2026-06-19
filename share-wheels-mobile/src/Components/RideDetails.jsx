@@ -315,7 +315,7 @@ const RideDetails = ({ navigation, route }) => {
         courier_type: courierForm.courier_type,
         what_to_deliver: courierForm.what_to_deliver,
         courier_img: courierForm.courier_img,
-        amount_will: courierForm.amount_will,
+        amount_will: Number(courierForm.amount_will),
         date: now.toISOString(),
         timeSlot: now.toISOString(),
         receiver_name: courierForm.receiver_name,
