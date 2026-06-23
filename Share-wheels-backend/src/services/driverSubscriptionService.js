@@ -15,10 +15,10 @@ const addPeriod = (start, periodValue, periodUnit) => {
   return expiresAt;
 };
 
-const buildPlanSnapshot = (plan) => ({
+const buildPlanSnapshot = (plan, { amountOverride } = {}) => ({
   name: plan.name,
   slug: plan.slug,
-  amount: plan.amount,
+  amount: plan.isFree ? 0 : Number(amountOverride ?? plan.amount ?? 0),
   currency: plan.currency,
   isFree: plan.isFree,
   enroutePickLimit: plan.enroutePickLimit,
@@ -40,6 +40,13 @@ const formatSubscription = (subscription) => {
   if (!subscription) return null;
 
   const snapshot = subscription.planSnapshot || {};
+  const lockedAmount = snapshot.isFree
+    ? 0
+    : Number(subscription.amountPaid ?? snapshot.amount ?? 0);
+  const plan = {
+    ...snapshot,
+    amount: lockedAmount,
+  };
   const now = new Date();
   const isTimeExpired =
     subscription.expiresAt <= now || subscription.status === "expired";
@@ -75,9 +82,9 @@ const formatSubscription = (subscription) => {
     isActive,
     isDeactivated,
     deactivationReason,
-    plan: snapshot,
+    plan: plan,
     planId: subscription.planId,
-    amountPaid: subscription.amountPaid,
+    amountPaid: lockedAmount,
   };
 };
 
@@ -201,6 +208,8 @@ const createSubscriptionForPlan = async (
   const startsAt = new Date();
   const expiresAt = addPeriod(startsAt, plan.periodValue, plan.periodUnit);
 
+  const paidAmount = plan.isFree ? 0 : Number(amountPaid ?? plan.amount ?? 0);
+
   await UserSubscription.updateMany(
     { userId, status: "active" },
     { $set: { status: "cancelled" } }
@@ -209,12 +218,12 @@ const createSubscriptionForPlan = async (
   return UserSubscription.create({
     userId,
     planId: plan._id,
-    planSnapshot: buildPlanSnapshot(plan),
+    planSnapshot: buildPlanSnapshot(plan, { amountOverride: paidAmount }),
     status: "active",
     picksUsed: 0,
     startsAt,
     expiresAt,
-    amountPaid: amountPaid ?? plan.amount ?? 0,
+    amountPaid: paidAmount,
     razorpayOrderId: razorpayOrderId || undefined,
     razorpayPaymentId: razorpayPaymentId || undefined,
   });
@@ -570,7 +579,7 @@ const verifyPaymentAndSubscribe = async (userId, body = {}) => {
   await paymentOrder.save();
 
   const subscription = await createSubscriptionForPlan(userId, plan, {
-    amountPaid: plan.amount,
+    amountPaid: paymentOrder.amount ?? plan.amount,
     razorpayOrderId: orderId,
     razorpayPaymentId: paymentId,
   });

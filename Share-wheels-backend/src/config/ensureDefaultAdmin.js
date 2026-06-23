@@ -1,7 +1,7 @@
 const Admin = require("../models/adminModel");
 
 /**
- * Ensures the single admin from .env exists (runs after MongoDB connects).
+ * Ensures the primary admin from .env exists (runs after MongoDB connects).
  */
 const ensureDefaultAdmin = async () => {
   const email = process.env.ADMIN_EMAIL?.trim().toLowerCase();
@@ -16,24 +16,36 @@ const ensureDefaultAdmin = async () => {
     return;
   }
 
-  let admin = await Admin.findOne();
+  let admin = await Admin.findOne({ email });
   if (!admin) {
-    admin = await Admin.create({ name, email, mobile, password });
-    console.log("Default admin created from .env:", email);
+    admin = await Admin.findOne();
+  }
+  if (!admin) {
+    admin = await Admin.create({
+      name,
+      email,
+      mobile,
+      password,
+      role: "super_admin",
+    });
+    console.log("Default super admin created from .env:", email);
     return;
   }
 
   const needsSync =
     admin.email?.toLowerCase() !== email ||
     admin.mobile !== mobile ||
-    admin.name !== name;
+    admin.name !== name ||
+    admin.role !== "super_admin";
 
   if (needsSync) {
     admin.name = name;
     admin.email = email;
     admin.mobile = mobile;
+    admin.role = "super_admin";
+    admin.isActive = true;
     await admin.save();
-    console.log("Admin profile synced from .env:", email);
+    console.log("Super admin profile synced from .env:", email);
   }
 };
 

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { getAdminRouteDirections } from "../api/client";
 import { decodePolyline } from "../utils/polyline";
 
@@ -8,6 +8,32 @@ const normalizeCoords = (coords) => {
   const lng = Number(coords.lng ?? coords.longitude);
   if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
   return { lat, lng };
+};
+
+const serializeStopovers = (stopovers = []) =>
+  JSON.stringify(
+    (Array.isArray(stopovers) ? stopovers : []).map((stop) => ({
+      label: String(stop?.label || stop?.name || "").trim(),
+      lat: Number(stop?.lat ?? stop?.latitude),
+      lng: Number(stop?.lng ?? stop?.longitude),
+    }))
+  );
+
+const pathsEqual = (left = [], right = []) => {
+  if (left.length !== right.length) return false;
+  for (let i = 0; i < left.length; i += 1) {
+    if (left[i]?.lat !== right[i]?.lat || left[i]?.lng !== right[i]?.lng) return false;
+  }
+  return true;
+};
+
+const endpointsEqual = (left = {}, right = {}) => {
+  const samePoint = (a, b) => {
+    if (!a && !b) return true;
+    if (!a || !b) return false;
+    return a.lat === b.lat && a.lng === b.lng;
+  };
+  return samePoint(left.from, right.from) && samePoint(left.to, right.to);
 };
 
 /**
@@ -28,27 +54,31 @@ export function usePlannedRoutePath({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
+  const stopoversKey = useMemo(() => serializeStopovers(stopovers), [stopovers]);
+
   useEffect(() => {
     const from = normalizeCoords(fromCoords);
     const to = normalizeCoords(toCoords);
     const fromText = String(fromLabel || "").trim();
     const toText = String(toLabel || "").trim();
-
     const stored = String(savedPolyline || "").trim();
 
     if (!enabled || (!from && !fromText) || (!to && !toText)) {
-      setPlannedPath([]);
-      setEndpoints({ from: null, to: null });
-      setError("");
+      setPlannedPath((prev) => (prev.length ? [] : prev));
+      setEndpoints((prev) => (prev.from || prev.to ? { from: null, to: null } : prev));
+      setError((prev) => (prev ? "" : prev));
       return undefined;
     }
 
     if (stored) {
       const path = decodePolyline(stored);
-      setPlannedPath(path.length > 1 ? path : []);
-      setEndpoints({ from: from || null, to: to || null });
-      setError("");
-      setLoading(false);
+      const nextPath = path.length > 1 ? path : [];
+      const nextEndpoints = { from: from || null, to: to || null };
+
+      setPlannedPath((prev) => (pathsEqual(prev, nextPath) ? prev : nextPath));
+      setEndpoints((prev) => (endpointsEqual(prev, nextEndpoints) ? prev : nextEndpoints));
+      setError((prev) => (prev ? "" : prev));
+      setLoading((prev) => (prev ? false : prev));
       return undefined;
     }
 
@@ -83,18 +113,21 @@ export function usePlannedRoutePath({
       .then((res) => {
         if (cancelled) return;
         const path = res.polyline ? decodePolyline(res.polyline) : [];
-        setPlannedPath(path.length > 1 ? path : []);
-        setEndpoints({
+        const nextPath = path.length > 1 ? path : [];
+        const nextEndpoints = {
           from: res.origin ? { lat: res.origin.lat, lng: res.origin.lng, label: "Pickup" } : from,
           to: res.destination
             ? { lat: res.destination.lat, lng: res.destination.lng, label: "Destination" }
             : to,
-        });
+        };
+        setPlannedPath((prev) => (pathsEqual(prev, nextPath) ? prev : nextPath));
+        setEndpoints((prev) => (endpointsEqual(prev, nextEndpoints) ? prev : nextEndpoints));
       })
       .catch((e) => {
         if (cancelled) return;
-        setPlannedPath([]);
-        setEndpoints({ from: from || null, to: to || null });
+        const fallbackEndpoints = { from: from || null, to: to || null };
+        setPlannedPath((prev) => (prev.length ? [] : prev));
+        setEndpoints((prev) => (endpointsEqual(prev, fallbackEndpoints) ? prev : fallbackEndpoints));
         setError(e.message || "Could not load route");
       })
       .finally(() => {
@@ -113,7 +146,7 @@ export function usePlannedRoutePath({
     fromLabel,
     toLabel,
     savedPolyline,
-    stopovers,
+    stopoversKey,
   ]);
 
   return { plannedPath, endpoints, loading, error };

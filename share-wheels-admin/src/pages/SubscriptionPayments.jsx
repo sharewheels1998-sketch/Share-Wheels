@@ -7,6 +7,7 @@ import AdminPageShell, { AdminTablePanel } from "../components/ui/AdminPageShell
 import Pagination from "../components/ui/Pagination";
 import { usePagination } from "../hooks/usePagination";
 import { Alert, btnClass, inputClass, Table, Th, Td } from "../components/ui/primitives";
+import UserTableCell from "../components/ui/UserTableCell";
 
 const STATUS_OPTIONS = ["all", "created", "paid", "failed", "expired"];
 
@@ -116,13 +117,11 @@ export default function SubscriptionPayments() {
                   paginatedItems.map((row) => (
                     <tr key={row.id} className="hover:bg-slate-50/80">
                       <Td>
-                        <div className="font-medium text-slate-800">{row.user?.name || "—"}</div>
-                        <div className="text-xs text-slate-500">
-                          {row.user?.email || row.user?.mobile || ""}
-                        </div>
-                        {row.user?.userNo ? (
-                          <div className="text-[10px] text-slate-400">#{row.user.userNo}</div>
-                        ) : null}
+                        <UserTableCell
+                          user={row.user}
+                          subtitle={row.user?.email || row.user?.mobile || undefined}
+                          meta={row.user?.userNo ? `#${row.user.userNo}` : undefined}
+                        />
                       </Td>
                       <Td>
                         <div className="font-medium">{row.plan?.name || "—"}</div>

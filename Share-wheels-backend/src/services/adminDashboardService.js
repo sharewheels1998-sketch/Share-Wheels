@@ -332,7 +332,7 @@ const listRides = async ({ page = 1, limit = 20, status }) => {
 
   const [rides, total] = await Promise.all([
     Ride.find(filter)
-      .populate("creator", "name email mobile")
+      .populate("creator", "name email mobile profile_img")
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(Number(limit))
@@ -352,7 +352,7 @@ const listPassengerRides = async ({ page = 1, limit = 20, status }) => {
 
   const [requests, total] = await Promise.all([
     PassengerRide.find(filter)
-      .populate("creator", "name email mobile")
+      .populate("creator", "name email mobile profile_img")
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(Number(limit))
@@ -372,7 +372,7 @@ const listCouriers = async ({ page = 1, limit = 20, status }) => {
 
   const [couriers, total] = await Promise.all([
     Courier.find(filter)
-      .populate("creator", "name email mobile")
+      .populate("creator", "name email mobile profile_img")
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(Number(limit))

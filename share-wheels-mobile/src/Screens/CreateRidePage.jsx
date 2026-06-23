@@ -24,6 +24,7 @@ import {
   showAppAlert,
 } from "../Utils/appAlert";
 import { useSuggestedRideFare } from "../hooks/useSuggestedRideFare";
+import { mapApiVehicleToProfileInfo } from "../Utils/vehicleProfileMap";
 import { goToDashboardWithRideHighlight } from "../Utils/navigateToDashboardHighlight";
 
 const hasCompleteVehicle = (info) =>
@@ -66,20 +67,30 @@ const CreateRidePage = () => {
 
   const vehicleInfo = ProfileDetails?.data?.vehicleInfo;
   const userName = ProfileDetails?.data?.personalInfo?.name;
+  const vehicleTypeKey = String(
+    vehicleInfo?.vehicleType || vehicleInfo?.type || ""
+  )
+    .trim()
+    .toLowerCase();
 
   const { fareHint, fareLoading, suggestedPrice, routeKm } = useSuggestedRideFare({
     vehicleInfo,
     routePlan,
   });
 
-  const fareResetKey = routePlan
-    ? [
-        routePlan.selectedRouteIndex ?? 0,
-        routePlan.distanceMeters ?? "",
-        routePlan.distanceKm ?? "",
-        String(routePlan.routePolyline || "").slice(0, 24),
-      ].join("|")
-    : "";
+  const fareResetKey = [
+    vehicleTypeKey,
+    routePlan
+      ? [
+          routePlan.selectedRouteIndex ?? 0,
+          routePlan.distanceMeters ?? "",
+          routePlan.distanceKm ?? "",
+          String(routePlan.routePolyline || "").slice(0, 24),
+        ].join("|")
+      : "",
+  ]
+    .filter(Boolean)
+    .join("::");
 
   const applyAutoFare = useCallback((value) => {
     if (priceTouchedRef.current || value == null) return;
@@ -105,6 +116,13 @@ const CreateRidePage = () => {
       refreshProfile();
     }, [refreshProfile])
   );
+
+  useEffect(() => {
+    priceTouchedRef.current = false;
+    setRideData((prev) =>
+      prev.ride_amount ? { ...prev, ride_amount: "" } : prev
+    );
+  }, [vehicleTypeKey]);
 
   const updateRideData = (field, value) => {
     if (field === "ride_amount") return;

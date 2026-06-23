@@ -10,6 +10,7 @@ import StatusBadge from "../components/StatusBadge";
 import IconActionButton, { TableActions } from "../components/ui/IconActionButton";
 import { IconCheck, IconCheckCircle } from "../components/ui/icons";
 import { Alert, btnClass, inputClass, Table, Th, Td } from "../components/ui/primitives";
+import UserTableCell from "../components/ui/UserTableCell";
 
 const STATUS_OPTIONS = ["all", "new", "reviewed", "resolved"];
 
@@ -84,8 +85,11 @@ export default function Feedbacks() {
                   paginatedItems.map((f) => (
                     <tr key={f._id} className="hover:bg-slate-50/80">
                       <Td>
-                        <div className="font-medium text-slate-800">{f.userId?.name || "—"}</div>
-                        <div className="text-xs text-slate-500">{f.userId?.email || f.userId?.mobile || ""}</div>
+                        <UserTableCell
+                          user={f.userId}
+                          subtitle={f.userId?.email || f.userId?.mobile || undefined}
+                          meta={f.userId?.userNo ? `#${f.userId.userNo}` : undefined}
+                        />
                       </Td>
                       <Td>{f.category}</Td>
                       <Td className="max-w-xs whitespace-pre-wrap text-slate-600">{f.message}</Td>

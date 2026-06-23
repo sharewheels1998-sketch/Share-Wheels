@@ -89,8 +89,8 @@ const SUBSCRIPTION_STAT_CARDS = [
 const ChartTooltip = ({ active, payload, label }) => {
   if (!active || !payload?.length) return null;
   return (
-    <div className="rounded-xl border border-slate-200 bg-white/95 px-3 py-2 text-xs shadow-lg backdrop-blur">
-      <p className="mb-1 font-semibold text-slate-700">{label}</p>
+    <div className="rounded-xl border border-slate-200 bg-white/95 px-3 py-2 text-xs shadow-lg backdrop-blur dark:border-slate-700 dark:bg-slate-900/95">
+      <p className="mb-1 font-semibold text-slate-700 dark:text-slate-200">{label}</p>
       {payload.map((p) => (
         <p key={p.dataKey} style={{ color: p.color }} className="font-medium">
           {p.name}: {p.value}
@@ -105,8 +105,8 @@ function DoughnutChart({ title, data, emptyLabel = "No data" }) {
   const chartData = rows.length ? rows : [{ name: emptyLabel, value: 1, color: "#cbd5e1" }];
 
   return (
-    <section className="flex min-h-[220px] flex-col overflow-hidden rounded-2xl border border-slate-200/80 bg-white p-4 shadow-sm">
-      <h2 className="mb-2 shrink-0 text-sm font-bold text-slate-800">{title}</h2>
+    <section className="flex min-h-[220px] flex-col overflow-hidden rounded-2xl border border-slate-200/80 bg-white p-4 shadow-sm dark:border-slate-700/80 dark:bg-slate-900">
+      <h2 className="mb-2 shrink-0 text-sm font-bold text-slate-800 dark:text-slate-100 dark:text-slate-100">{title}</h2>
       <div className="min-h-[140px] flex-1">
         <ResponsiveContainer width="100%" height="100%">
           <PieChart>
@@ -128,7 +128,7 @@ function DoughnutChart({ title, data, emptyLabel = "No data" }) {
       </div>
       <div className="mt-1 flex flex-wrap gap-2">
         {rows.map((item) => (
-          <span key={item.name} className="inline-flex items-center gap-1 text-[11px] text-slate-600">
+          <span key={item.name} className="inline-flex items-center gap-1 text-[11px] text-slate-600 dark:text-slate-400">
             <span className="h-2 w-2 rounded-full" style={{ background: item.color }} />
             {item.name} ({item.value})
           </span>
@@ -204,7 +204,7 @@ export default function Dashboard() {
               Updated {lastSync.toLocaleTimeString()}
             </span>
           ) : null}
-          <button type="button" onClick={() => load(true)} className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50">
+          <button type="button" onClick={() => load(true)} className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700">
             Refresh
           </button>
         </div>
@@ -253,8 +253,8 @@ export default function Dashboard() {
 
       <div className="grid grid-cols-12 gap-3">
         {/* Ride status donut */}
-        <section className="col-span-12 flex min-h-[280px] flex-col overflow-hidden rounded-2xl border border-slate-200/80 bg-white p-4 shadow-sm lg:col-span-4">
-          <h2 className="mb-2 shrink-0 text-sm font-bold text-slate-800">Ride status mix</h2>
+        <section className="col-span-12 flex min-h-[280px] flex-col overflow-hidden rounded-2xl border border-slate-200/80 bg-white p-4 shadow-sm dark:border-slate-700/80 dark:bg-slate-900 lg:col-span-4">
+          <h2 className="mb-2 shrink-0 text-sm font-bold text-slate-800 dark:text-slate-100">Ride status mix</h2>
           <div className="h-[200px] shrink-0">
             <ResponsiveContainer width="100%" height="100%">
               <PieChart>
@@ -276,15 +276,15 @@ export default function Dashboard() {
           </div>
           <div className="mt-1 flex flex-wrap gap-2">
             {breakdown.map((item) => (
-              <span key={item.name} className="inline-flex items-center gap-1 text-[11px] text-slate-600">
+              <span key={item.name} className="inline-flex items-center gap-1 text-[11px] text-slate-600 dark:text-slate-400">
                 <span className="h-2 w-2 rounded-full" style={{ background: item.color }} />
                 {item.name} ({item.value})
               </span>
             ))}
           </div>
         </section>
-        <section className="col-span-12 flex min-h-[280px] flex-col overflow-hidden rounded-2xl border border-slate-200/80 bg-white p-4 shadow-sm lg:col-span-5">
-          <h2 className="mb-2 shrink-0 text-sm font-bold text-slate-800">7-day activity</h2>
+        <section className="col-span-12 flex min-h-[280px] flex-col overflow-hidden rounded-2xl border border-slate-200/80 bg-white p-4 shadow-sm dark:border-slate-700/80 dark:bg-slate-900 lg:col-span-5">
+          <h2 className="mb-2 shrink-0 text-sm font-bold text-slate-800 dark:text-slate-100">7-day activity</h2>
           <div className="h-[200px] shrink-0">
             <ResponsiveContainer width="100%" height="100%">
               <AreaChart data={activity} margin={{ top: 8, right: 8, left: -20, bottom: 0 }}>
@@ -315,8 +315,8 @@ export default function Dashboard() {
         </section>
 
         {/* Requests bar */}
-        <section className="col-span-12 flex min-h-[280px] flex-col overflow-hidden rounded-2xl border border-slate-200/80 bg-white p-4 shadow-sm lg:col-span-3">
-          <h2 className="mb-2 shrink-0 text-sm font-bold text-slate-800">Open pipeline</h2>
+        <section className="col-span-12 flex min-h-[280px] flex-col overflow-hidden rounded-2xl border border-slate-200/80 bg-white p-4 shadow-sm dark:border-slate-700/80 dark:bg-slate-900 lg:col-span-3">
+          <h2 className="mb-2 shrink-0 text-sm font-bold text-slate-800 dark:text-slate-100">Open pipeline</h2>
           <div className="h-[160px] shrink-0">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart
@@ -358,10 +358,10 @@ export default function Dashboard() {
         {/* Recent rides + subscriptions */}
         <section className="col-span-12 flex flex-col lg:col-span-6">
           <div className="mb-2 flex shrink-0 items-center justify-between">
-            <h2 className="text-sm font-bold text-slate-800">Recent rides</h2>
+            <h2 className="text-sm font-bold text-slate-800 dark:text-slate-100">Recent rides</h2>
             <span className="text-xs text-slate-500">{recentRides.length} records</span>
           </div>
-          <div className="overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-sm">
+          <div className="overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-sm dark:border-slate-700/80 dark:bg-slate-900">
             <div className="max-h-[320px] overflow-auto scrollbar-thin">
               <table className="min-w-full divide-y divide-slate-200 text-sm">
                 <thead className="sticky top-0 z-10 bg-slate-50">
@@ -383,7 +383,7 @@ export default function Dashboard() {
                     recentRides.map((ride) => (
                       <tr key={ride.id} className="hover:bg-slate-50/80">
                         <Td>
-                          <div className="font-semibold text-slate-800">{ride.from}</div>
+                          <div className="font-semibold text-slate-800 dark:text-slate-100">{ride.from}</div>
                           <div className="text-xs text-slate-500">→ {ride.to}</div>
                         </Td>
                         <Td>{ride.driver}</Td>
@@ -409,10 +409,10 @@ export default function Dashboard() {
 
         <section className="col-span-12 flex flex-col lg:col-span-6">
           <div className="mb-2 flex shrink-0 items-center justify-between">
-            <h2 className="text-sm font-bold text-slate-800">Recent subscriptions</h2>
+            <h2 className="text-sm font-bold text-slate-800 dark:text-slate-100">Recent subscriptions</h2>
             <span className="text-xs text-slate-500">{recentSubscriptions.length} records</span>
           </div>
-          <div className="overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-sm">
+          <div className="overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-sm dark:border-slate-700/80 dark:bg-slate-900">
             <div className="max-h-[320px] overflow-auto scrollbar-thin">
               <table className="min-w-full divide-y divide-slate-200 text-sm">
                 <thead className="sticky top-0 z-10 bg-slate-50">
@@ -434,7 +434,7 @@ export default function Dashboard() {
                     recentSubscriptions.map((sub) => (
                       <tr key={sub.id} className="hover:bg-slate-50/80">
                         <Td>
-                          <div className="font-semibold text-slate-800">{sub.user}</div>
+                          <div className="font-semibold text-slate-800 dark:text-slate-100">{sub.user}</div>
                           {sub.email ? (
                             <div className="text-xs text-slate-500">{sub.email}</div>
                           ) : null}

@@ -13,6 +13,9 @@ const adminAuthMiddleware = async (req, res, next) => {
 
     const admin = await Admin.findById(decoded.id);
     if (!admin) return res.status(401).json({ message: "Admin not found" });
+    if (admin.isActive === false) {
+      return res.status(403).json({ message: "This admin account is deactivated" });
+    }
 
     req.admin = admin;
     next();

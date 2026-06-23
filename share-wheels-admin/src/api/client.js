@@ -204,6 +204,16 @@ export const updateVehicleFare = (id, body) =>
 export const deleteVehicleFare = (id) =>
   api(`/admin/vehicle-fares/${id}`, { method: "DELETE" });
 
+export const getAdminMe = () => api("/admin/me");
+export const getAdminStaffMeta = () => api("/admin/staff/meta");
+export const getAdminStaff = () => api("/admin/staff");
+export const createAdminStaff = (body) =>
+  api("/admin/staff", { method: "POST", body: JSON.stringify(body) });
+export const updateAdminStaff = (id, body) =>
+  api(`/admin/staff/${id}`, { method: "PATCH", body: JSON.stringify(body) });
+export const deleteAdminStaff = (id) =>
+  api(`/admin/staff/${id}`, { method: "DELETE" });
+
 export const uploadAdMedia = async (file, mediaType = "image") => {
   const token = getToken();
   const formData = new FormData();

@@ -91,6 +91,18 @@ const MapLegend = () => (
   </div>
 );
 
+function MapResizeHandler({ map, resizeKey }) {
+  useEffect(() => {
+    if (!map || !resizeKey) return undefined;
+    const id = window.setTimeout(() => {
+      window.google?.maps?.event?.trigger(map, "resize");
+    }, 100);
+    return () => window.clearTimeout(id);
+  }, [map, resizeKey]);
+
+  return null;
+}
+
 function FitBoundsHandler({ markers, map, fitSessionKey }) {
   const fittedSessionRef = useRef(null);
 
@@ -102,10 +114,15 @@ function FitBoundsHandler({ markers, map, fitSessionKey }) {
       .filter((m) => LIVE_ROLES.has(m.role))
       .map((m) => ({ lat: m.lat, lng: m.lng }));
 
-    if (!livePoints.length) return;
+    const routePoints = markers
+      .filter((m) => ROUTE_ROLES.has(m.role))
+      .map((m) => ({ lat: m.lat, lng: m.lng }));
+
+    const fitPoints = livePoints.length ? livePoints : routePoints;
+    if (!fitPoints.length) return;
 
     fittedSessionRef.current = fitSessionKey;
-    fitMapToPoints(map, livePoints);
+    fitMapToPoints(map, fitPoints);
   }, [map, fitSessionKey, markers]);
 
   return null;
@@ -147,6 +164,7 @@ export default function GoogleTrackingMap({
   plannedPath = [],
   gpsPath = [],
   fitSessionKey = "",
+  resizeKey = "",
   loading = false,
   loadingMessage = "Loading map…",
 }) {
@@ -248,6 +266,7 @@ export default function GoogleTrackingMap({
           ],
         }}
       >
+        <MapResizeHandler map={map} resizeKey={resizeKey || fitSessionKey} />
         <FitBoundsHandler markers={markers} map={map} fitSessionKey={fitSessionKey} />
         <RouteFitHandler
           map={map}

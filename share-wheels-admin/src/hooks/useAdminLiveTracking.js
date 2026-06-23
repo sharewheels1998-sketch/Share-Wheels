@@ -294,3 +294,5 @@ export function useAdminLiveTracking() {
     setRides,
   };
 }
+
+export { normalizeRideRow, rideKey };

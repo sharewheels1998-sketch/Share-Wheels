@@ -1,10 +1,16 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { adminLogin } from "../api/client";
+import { useAdminAuth } from "../context/AdminAuthContext";
+import { useTheme } from "../context/ThemeContext";
+import AdminLogo from "../components/AdminLogo";
 import { Alert, btnClass, inputClass } from "../components/ui/primitives";
+import { IconSun, IconMoon } from "../components/ui/icons";
 
 export default function Login() {
   const navigate = useNavigate();
+  const { setAdmin } = useAdminAuth();
+  const { isDark, toggleTheme } = useTheme();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -17,7 +23,7 @@ export default function Login() {
     try {
       const res = await adminLogin(email, password);
       localStorage.setItem("adminToken", res.token);
-      localStorage.setItem("admin", JSON.stringify(res.admin));
+      setAdmin(res.admin);
       navigate("/");
     } catch (err) {
       setError(err.message);
@@ -28,18 +34,25 @@ export default function Login() {
 
   return (
     <div className="relative flex min-h-full items-center justify-center overflow-hidden bg-[#0b1220] px-4 py-10">
+      <button
+        type="button"
+        onClick={toggleTheme}
+        className="absolute right-4 top-4 z-20 flex h-10 w-10 items-center justify-center rounded-xl border border-white/10 bg-white/10 text-white backdrop-blur transition hover:bg-white/20"
+        title={isDark ? "Switch to light mode" : "Switch to dark mode"}
+        aria-label={isDark ? "Switch to light mode" : "Switch to dark mode"}
+      >
+        {isDark ? <IconSun className="h-5 w-5" /> : <IconMoon className="h-5 w-5" />}
+      </button>
       <div className="pointer-events-none absolute inset-0">
         <div className="absolute -left-32 top-0 h-96 w-96 rounded-full bg-brand-600/30 blur-3xl" />
         <div className="absolute -right-24 bottom-0 h-80 w-80 rounded-full bg-accent-violet/25 blur-3xl" />
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_0%,rgba(99,102,241,0.15),transparent_55%)]" />
       </div>
 
-      <div className="relative z-10 grid w-full max-w-4xl overflow-hidden rounded-3xl border border-white/10 bg-white/95 shadow-2xl backdrop-blur-xl lg:grid-cols-2">
+      <div className="relative z-10 grid w-full max-w-4xl overflow-hidden rounded-3xl border border-white/10 bg-white/95 shadow-2xl backdrop-blur-xl lg:grid-cols-2 dark:border-slate-700 dark:bg-slate-900/95">
         <div className="hidden flex-col justify-between bg-gradient-to-br from-brand-600 via-brand-700 to-accent-violet p-10 text-white lg:flex">
           <div>
-            <span className="inline-flex h-14 w-14 items-center justify-center rounded-2xl bg-white/15 text-lg font-extrabold backdrop-blur">
-              SW
-            </span>
+            <AdminLogo className="h-14 w-14 shadow-xl shadow-black/20" />
             <h1 className="mt-8 text-3xl font-extrabold tracking-tight">Share Wheels Admin</h1>
             <p className="mt-3 max-w-sm text-sm leading-relaxed text-indigo-100">
               Manage users, rides, courier requests, ads, and legal policies from one modern console.
@@ -50,12 +63,10 @@ export default function Login() {
 
         <form onSubmit={handleSubmit} className="p-8 lg:p-10">
           <div className="mb-6 lg:hidden">
-            <span className="inline-flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-brand-600 to-accent-violet text-base font-extrabold text-white">
-              SW
-            </span>
+            <AdminLogo className="h-12 w-12" />
           </div>
-          <h2 className="text-2xl font-extrabold tracking-tight text-slate-900">Welcome back</h2>
-          <p className="mt-2 text-sm text-slate-500">Sign in to continue to the admin panel.</p>
+          <h2 className="text-2xl font-extrabold tracking-tight text-slate-900 dark:text-slate-100">Welcome back</h2>
+          <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">Sign in to continue to the admin panel.</p>
 
           {error ? <Alert className="mt-5">{error}</Alert> : null}
 
@@ -82,12 +93,12 @@ export default function Login() {
                 onChange={(e) => setPassword(e.target.value)}
                 required
                 autoComplete="current-password"
-                placeholder="��������"
+                placeholder="••••••••"
               />
             </label>
 
             <button type="submit" disabled={loading} className={`${btnClass("primary")} w-full py-3`}>
-              {loading ? "Signing in�" : "Sign in"}
+              {loading ? "Signing in…" : "Sign in"}
             </button>
           </div>
         </form>

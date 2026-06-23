@@ -21,7 +21,7 @@ const PriceCard = ({
     if (readOnly && suggestedPrice != null && onAutoFare) {
       onAutoFare(suggestedPrice);
     }
-  }, [readOnly, suggestedPrice, onAutoFare]);
+  }, [readOnly, suggestedPrice, onAutoFare, fareResetKey]);
 
   const displayValue =
     rideData.ride_amount ||

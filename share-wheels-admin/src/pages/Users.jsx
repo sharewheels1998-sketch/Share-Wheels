@@ -16,7 +16,9 @@ import Pagination from "../components/ui/Pagination";
 import { usePagination } from "../hooks/usePagination";
 import IconActionButton, { TableActions } from "../components/ui/IconActionButton";
 import { IconEdit, IconShieldCheck, IconShieldOff, IconTrash } from "../components/ui/icons";
+import PermissionGate from "../components/PermissionGate";
 import { Alert, btnClass, inputClass, ModalBackdrop, Table, Th, Td } from "../components/ui/primitives";
+import UserTableCell from "../components/ui/UserTableCell";
 
 const EMPTY_FORM = {
   name: "",
@@ -199,20 +201,24 @@ export default function Users() {
           <option value="verified">Verified</option>
           <option value="unverified">Unverified</option>
         </select>
-        <button type="button" className={btnClass("primary", "sm")} onClick={openCreate}>
-          Create user
-        </button>
-        <button type="button" className={btnClass("secondary", "sm")} onClick={load}>
+        <button type="button" className={btnClass("primary", "sm")} onClick={load}>
           Refresh
         </button>
-        <button
-          type="button"
-          className={btnClass("secondary", "sm")}
-          onClick={handleBackfillPasswords}
-          disabled={backfillLoading}
-        >
-          {backfillLoading ? "Loading…" : "Load missing passwords"}
-        </button>
+        <PermissionGate module="users" action="create">
+          <button type="button" className={btnClass("primary", "sm")} onClick={openCreate}>
+            Create user
+          </button>
+        </PermissionGate>
+        <PermissionGate module="users" action="edit">
+          <button
+            type="button"
+            className={btnClass("secondary", "sm")}
+            onClick={handleBackfillPasswords}
+            disabled={backfillLoading}
+          >
+            {backfillLoading ? "Loading…" : "Load missing passwords"}
+          </button>
+        </PermissionGate>
       </FilterBar>
 
       {error ? <Alert className="mb-3 shrink-0">{error}</Alert> : null}
@@ -225,7 +231,7 @@ export default function Users() {
             <Table fill>
               <thead>
                 <tr>
-                  <Th sticky>Name</Th>
+                  <Th sticky>User</Th>
                   <Th sticky>Email</Th>
                   <Th sticky>Mobile</Th>
                   <Th sticky>Password</Th>
@@ -243,7 +249,9 @@ export default function Users() {
                 ) : (
                   paginatedItems.map((u) => (
                 <tr key={u._id} className="hover:bg-slate-50/80">
-                  <Td className="font-medium text-slate-800">{u.name || "—"}</Td>
+                  <Td>
+                    <UserTableCell user={u} subtitle={u.email || undefined} />
+                  </Td>
                   <Td>{u.email || "—"}</Td>
                   <Td>{u.mobile || "—"}</Td>
                   <Td>
@@ -260,20 +268,24 @@ export default function Users() {
                   </Td>
                   <Td>
                     <TableActions>
-                      <IconActionButton icon={IconEdit} label="Edit user" onClick={() => openEdit(u)} />
-                      <IconActionButton
-                        icon={u.isVerified ? IconShieldOff : IconShieldCheck}
-                        label={u.isVerified ? "Unverify user" : "Verify user"}
-                        variant="ghost"
-                        onClick={() => toggleVerify(u._id, u.isVerified)}
-                      />
-                      <IconActionButton
-                        icon={IconTrash}
-                        label="Delete user"
-                        variant="danger"
-                        onClick={() => handleDelete(u)}
-                        disabled={saving}
-                      />
+                      <PermissionGate module="users" action="edit">
+                        <IconActionButton icon={IconEdit} label="Edit user" onClick={() => openEdit(u)} />
+                        <IconActionButton
+                          icon={u.isVerified ? IconShieldOff : IconShieldCheck}
+                          label={u.isVerified ? "Unverify user" : "Verify user"}
+                          variant="ghost"
+                          onClick={() => toggleVerify(u._id, u.isVerified)}
+                        />
+                      </PermissionGate>
+                      <PermissionGate module="users" action="delete">
+                        <IconActionButton
+                          icon={IconTrash}
+                          label="Delete user"
+                          variant="danger"
+                          onClick={() => handleDelete(u)}
+                          disabled={saving}
+                        />
+                      </PermissionGate>
                     </TableActions>
                   </Td>
                 </tr>

@@ -1,5 +1,7 @@
 @import "tailwindcss";
 
+@custom-variant dark (&:where(.dark, .dark *));
+
 @theme {
   --font-sans: "Inter", "Segoe UI", system-ui, sans-serif;
   --color-brand-50: #eef2ff;
@@ -17,6 +19,12 @@
   --color-sidebar: #0b1220;
   --color-sidebar-hover: #151f33;
   --color-sidebar-active: #1e293b;
+}
+
+html.dark {
+  --color-surface: #0f172a;
+  --color-canvas: #020617;
+  color-scheme: dark;
 }
 
 @layer base {
@@ -41,6 +49,10 @@
     -moz-osx-font-smoothing: grayscale;
     background: var(--color-canvas);
     color: #0f172a;
+  }
+
+  html.dark body {
+    color: #e2e8f0;
   }
 
   button {
@@ -73,6 +85,14 @@
   .scrollbar-thin::-webkit-scrollbar-thumb {
     background: #cbd5e1;
     border-radius: 999px;
+  }
+
+  html.dark .scrollbar-thin {
+    scrollbar-color: #475569 transparent;
+  }
+
+  html.dark .scrollbar-thin::-webkit-scrollbar-thumb {
+    background: #475569;
   }
 
   .scrollbar-thin::-webkit-scrollbar-track {
@@ -112,14 +132,46 @@
 
 /* Rich text editor (Legal policies) */
 .rte-wrap .ql-toolbar {
-  @apply rounded-t-xl border border-slate-200 bg-slate-50/90;
+  @apply rounded-t-xl border border-slate-200 bg-slate-50/90 dark:border-slate-700 dark:bg-slate-800/90;
 }
 
 .rte-wrap .ql-container {
-  @apply min-h-[280px] rounded-b-xl border border-slate-200 border-t-0 text-[15px];
+  @apply min-h-[280px] rounded-b-xl border border-slate-200 border-t-0 bg-white text-[15px] dark:border-slate-700 dark:border-t-0 dark:bg-slate-900 dark:text-slate-100;
 }
 
 .rte-wrap .ql-editor {
   min-height: 280px;
   line-height: 1.6;
+}
+
+html.dark .rte-wrap .ql-stroke {
+  stroke: #94a3b8;
+}
+
+html.dark .rte-wrap .ql-fill {
+  fill: #94a3b8;
+}
+
+html.dark .rte-wrap .ql-picker-label {
+  color: #cbd5e1;
+}
+
+/* Leaflet live tracking map */
+.sw-admin-leaflet-marker {
+  background: transparent !important;
+  border: none !important;
+}
+
+.leaflet-container {
+  font-family: inherit;
+  z-index: 0;
+}
+
+/* Shared dark styles for table rows across list pages */
+.dark tbody.bg-white {
+  @apply bg-slate-900;
+}
+
+.dark tr.hover\:bg-slate-50\/80:hover {
+  @apply bg-slate-800/80;
 }

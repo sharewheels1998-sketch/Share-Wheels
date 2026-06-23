@@ -42,6 +42,33 @@ const formatPeriod = (plan) => {
   return `${plan.periodValue} ${unit}`;
 };
 
+/** Active subscription shows price/terms at purchase; catalog price applies after expiry/renewal. */
+const getPlanForDisplay = (catalogPlan, subscription, { isCurrentActive }) => {
+  if (!catalogPlan || !isCurrentActive || !subscription?.isActive) {
+    return catalogPlan;
+  }
+
+  const locked = subscription.plan || {};
+  const amount =
+    subscription.amountPaid ??
+    locked.amount ??
+    (locked.isFree ? 0 : catalogPlan.amount);
+
+  return {
+    ...catalogPlan,
+    name: locked.name || catalogPlan.name,
+    description: locked.description ?? catalogPlan.description,
+    amount,
+    isFree: locked.isFree ?? catalogPlan.isFree,
+    enroutePickLimit:
+      locked.enroutePickLimit ?? catalogPlan.enroutePickLimit,
+    unlimitedPicks:
+      locked.unlimitedPicks ?? catalogPlan.unlimitedPicks,
+    periodValue: locked.periodValue ?? catalogPlan.periodValue,
+    periodUnit: locked.periodUnit ?? catalogPlan.periodUnit,
+  };
+};
+
 const formatExpiry = (value) => {
   if (!value) return "—";
   const date = new Date(value);
@@ -699,6 +726,12 @@ const DriverSubscriptionScreen = () => {
                     <Text style={styles.usageMetaStrong}>
                       {subscription.plan?.name || "—"}
                     </Text>
+                    {!subscription.isFree && subscription.isActive ? (
+                      <Text style={styles.usageMetaStrong}>
+                        {" "}
+                        · ₹{subscription.amountPaid ?? subscription.plan?.amount ?? 0} paid
+                      </Text>
+                    ) : null}
                     {subscription.isDeactivated ? (
                       <Text style={styles.usageMetaDeactivated}> · Deactivated</Text>
                     ) : null}
@@ -748,11 +781,15 @@ const DriverSubscriptionScreen = () => {
               const planId = String(plan._id);
               const isPlanMatch =
                 subscriptionPlanId && String(subscriptionPlanId) === planId;
+              const isCurrentActive = isPlanMatch && !!subscription?.isActive;
+              const displayPlan = getPlanForDisplay(plan, subscription, {
+                isCurrentActive,
+              });
               return (
                 <PlanCard
                   key={plan._id}
-                  plan={plan}
-                  isCurrent={isPlanMatch && !!subscription?.isActive}
+                  plan={displayPlan}
+                  isCurrent={isCurrentActive}
                   isDeactivated={isPlanMatch && !!subscription?.isDeactivated}
                   deactivationReason={subscription?.deactivationReason}
                   subscribing={subscribingId === plan._id}
