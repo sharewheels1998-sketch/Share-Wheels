@@ -30,11 +30,11 @@ export default function Pagination({
 
   return (
     <div
-      className={`flex shrink-0 flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200/80 bg-white px-4 py-2.5 shadow-sm ${className}`}
+      className={`flex shrink-0 flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200/80 bg-white px-4 py-2.5 shadow-sm dark:border-slate-700/80 dark:bg-slate-900 ${className}`}
     >
-      <p className="text-xs font-medium text-slate-500">
-        Showing <span className="font-semibold text-slate-700">{start}–{end}</span> of{" "}
-        <span className="font-semibold text-slate-700">{totalItems}</span>
+      <p className="text-xs font-medium text-slate-500 dark:text-slate-400">
+        Showing <span className="font-semibold text-slate-700 dark:text-slate-200">{start}–{end}</span> of{" "}
+        <span className="font-semibold text-slate-700 dark:text-slate-200">{totalItems}</span>
       </p>
 
       <div className="flex items-center gap-1">

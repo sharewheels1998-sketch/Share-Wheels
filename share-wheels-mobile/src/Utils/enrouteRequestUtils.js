@@ -7,7 +7,11 @@ export const formatEnrouteItems = (list, from, to) => {
     const isCourier = item.request_type?.toLowerCase().includes("courier");
 
     return {
-      id: item.passengerId || item.courierId || item._id || `row-${index}`,
+      id:
+        item.passengerId ||
+        item.courierId ||
+        item._id ||
+        `${item.creatorId || "user"}-${item.from || ""}-${item.to || ""}-${index}`,
       rideId: item.rideId || item.ride_id,
       courierId: item.courierId || item.courier_id,
       passengerId: item.passengerId || item.passenger_id,
@@ -79,6 +83,97 @@ export const buildEnrouteFetchPayload = ({
   };
 };
 
+const normalizeUserId = (value) => {
+  const id = value?._id || value?.userId?._id || value?.userId || value;
+  return id != null && id !== "" ? String(id) : "";
+};
+
+export const collectRideParticipantUserIds = ({
+  passengers = [],
+  couriers = [],
+  passengerRequests = [],
+  courierRequests = [],
+} = {}) => {
+  const ids = new Set();
+  const add = (row) => {
+    const id = normalizeUserId(row?.creatorId || row?.creator || row);
+    if (id) ids.add(id);
+  };
+
+  passengers.forEach(add);
+  couriers.forEach(add);
+  passengerRequests.forEach(add);
+  courierRequests.forEach(add);
+  return ids;
+};
+
+export const filterEnrouteByParticipants = (data = [], participantUserIds) => {
+  // Keep all corridor-matched requests visible; pick conflicts are handled at pick time.
+  void participantUserIds;
+  return data;
+};
+
+export const getEnroutePickConflict = (item, participantUserIds) => {
+  if (!item) return null;
+
+  const creatorId = normalizeUserId(item.creatorId);
+  if (!creatorId) return null;
+
+  if (participantUserIds?.has?.(creatorId)) {
+    return {
+      code: "PARTICIPANT_CONFLICT",
+      message: `${item.name || "This user"} is already on your ride. Someone cannot be both passenger and courier on the same trip.`,
+    };
+  }
+
+  return null;
+};
+
+export const getEnrouteSiblingNote = (item, enrouteData = []) => {
+  if (!item) return "";
+  const creatorId = normalizeUserId(item.creatorId);
+  if (!creatorId) return "";
+
+  const oppositeType = item.type === "courier" ? "passenger" : "courier";
+  const hasSibling = (enrouteData || []).some(
+    (row) =>
+      normalizeUserId(row.creatorId) === creatorId &&
+      row.type === oppositeType
+  );
+
+  if (!hasSibling) return "";
+  return `${item.name || "This user"} also has an open ${oppositeType} request. Only one role can be added to your ride.`;
+};
+
+export const ENROUTE_ALREADY_PICKED_MESSAGE =
+  "This request is already picked by another driver.";
+
+export const isEnrouteRequestUnavailableError = (response) => {
+  const code = String(response?.code || "").toUpperCase();
+  if (code === "ALREADY_PICKED") return true;
+
+  const message = String(response?.message || response?.error || "").toLowerCase();
+  return (
+    message.includes("already picked") ||
+    message.includes("another driver") ||
+    message.includes("no longer available") ||
+    message.includes("passenger not found") ||
+    message.includes("courier not found") ||
+    message.includes("request not found")
+  );
+};
+
+const ENROUTE_SUBSCRIPTION_ERROR_CODES = new Set([
+  "PICK_LIMIT_REACHED",
+  "SUBSCRIPTION_EXPIRED",
+  "NO_PLAN",
+]);
+
+export const isEnrouteSubscriptionError = (response) => {
+  const code = String(response?.code || "").toUpperCase();
+  return ENROUTE_SUBSCRIPTION_ERROR_CODES.has(code);
+};
+
 export const shouldRemoveEnrouteRow = (row, payload) => {
   if (!payload || !row) return false;
 
@@ -94,10 +189,6 @@ export const shouldRemoveEnrouteRow = (row, payload) => {
     payload.courierId &&
     String(row.courierId || "") === String(payload.courierId)
   ) {
-    return true;
-  }
-
-  if (payload.userId && String(row.creatorId || "") === String(payload.userId)) {
     return true;
   }
 

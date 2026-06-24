@@ -9,6 +9,7 @@ import AdminPageShell, { AdminTablePanel } from "../components/ui/AdminPageShell
 import Pagination from "../components/ui/Pagination";
 import { usePagination } from "../hooks/usePagination";
 import { btnClass, inputClass, Table, Th, Td } from "../components/ui/primitives";
+import UserTableCell from "../components/ui/UserTableCell";
 
 export default function Rides() {
   const [rides, setRides] = useState([]);
@@ -103,7 +104,12 @@ export default function Rides() {
                         <div className="font-semibold text-slate-800">{r.from}</div>
                         <div className="text-xs text-slate-500">→ {r.to}</div>
                       </Td>
-                      <Td>{r.creator?.name || "—"}</Td>
+                      <Td>
+                        <UserTableCell
+                          user={r.creator}
+                          subtitle={r.creator?.mobile || r.creator?.email || undefined}
+                        />
+                      </Td>
                       <Td>{r.date ? new Date(r.date).toLocaleDateString() : "—"}</Td>
                       <Td>{r.availableSeats ?? "—"}</Td>
                       <Td className="font-semibold">₹{r.ride_amount ?? 0}</Td>

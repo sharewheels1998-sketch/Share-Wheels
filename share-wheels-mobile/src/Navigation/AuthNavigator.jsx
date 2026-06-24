@@ -38,6 +38,10 @@ import { useAppSocketConnection } from "../hooks/useAppSocket";
 import { syncFcmTokenWithBackend } from "../Notifications/registerToken";
 import { AUTH_COLORS } from "../theme/authTheme";
 import { useTheme } from "../context/ThemeContext";
+import {
+  syncCrashlyticsUser,
+  clearCrashlyticsUser,
+} from "../services/crashlytics";
 
 const Stack = createNativeStackNavigator();
 const ProfileContext = createContext(null);
@@ -65,6 +69,8 @@ const AuthNavigator = () => {
   const [refresh, setRefresh] = useState(0);
   const [userData, setUserData] = useState(null);
   const [refreshUpcomingRides, setRefreshUpcomingrides] = useState(true);
+  const [pendingHighlightRideId, setPendingHighlightRideId] = useState(null);
+  const [pendingHighlightLabel, setPendingHighlightLabel] = useState(null);
   const [ProfileDetails, SetProfileDetails] = useState(null);
 
   useAppSocketConnection(isAuthenticated);
@@ -148,6 +154,14 @@ const AuthNavigator = () => {
     checkAuth();
   }, [refresh]);
 
+  useEffect(() => {
+    if (ProfileDetails) {
+      syncCrashlyticsUser(ProfileDetails).catch(() => {});
+    } else if (!isAuthenticated) {
+      clearCrashlyticsUser().catch(() => {});
+    }
+  }, [ProfileDetails, isAuthenticated]);
+
   const logout = async () => {
     await clearAuthSession();
     SetProfileDetails(null);
@@ -174,6 +188,10 @@ const AuthNavigator = () => {
         setRefresh,
         refreshUpcomingRides,
         setRefreshUpcomingrides,
+        pendingHighlightRideId,
+        setPendingHighlightRideId,
+        pendingHighlightLabel,
+        setPendingHighlightLabel,
         ProfileDetails,
         SetProfileDetails,
         logout,

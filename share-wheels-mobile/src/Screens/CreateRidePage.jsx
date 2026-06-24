@@ -24,6 +24,8 @@ import {
   showAppAlert,
 } from "../Utils/appAlert";
 import { useSuggestedRideFare } from "../hooks/useSuggestedRideFare";
+import { mapApiVehicleToProfileInfo } from "../Utils/vehicleProfileMap";
+import { goToDashboardWithRideHighlight } from "../Utils/navigateToDashboardHighlight";
 
 const hasCompleteVehicle = (info) =>
   !!(info?.vehicleCompany?.trim() && info?.vehicleModel?.trim());
@@ -33,8 +35,13 @@ const CreateRidePage = () => {
   const { colors } = useTheme();
   const CR = getCreateRideTheme(colors);
   const formRef = useRef(null);
-  const { setRefreshUpcomingrides, ProfileDetails, SetProfileDetails } =
-    profileData();
+  const {
+    setRefreshUpcomingrides,
+    setPendingHighlightRideId,
+    setPendingHighlightLabel,
+    ProfileDetails,
+    SetProfileDetails,
+  } = profileData();
 
   const [submitted, setSubmitted] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -55,26 +62,35 @@ const CreateRidePage = () => {
     date: "",
     AlternatePhoneNumber: "",
     startTime: "",
-    CanCarryCourier: false,
-    QuickReserve: false,
+    CanCarryCourier: true,
   });
 
   const vehicleInfo = ProfileDetails?.data?.vehicleInfo;
   const userName = ProfileDetails?.data?.personalInfo?.name;
+  const vehicleTypeKey = String(
+    vehicleInfo?.vehicleType || vehicleInfo?.type || ""
+  )
+    .trim()
+    .toLowerCase();
 
   const { fareHint, fareLoading, suggestedPrice, routeKm } = useSuggestedRideFare({
     vehicleInfo,
     routePlan,
   });
 
-  const fareResetKey = routePlan
-    ? [
-        routePlan.selectedRouteIndex ?? 0,
-        routePlan.distanceMeters ?? "",
-        routePlan.distanceKm ?? "",
-        String(routePlan.routePolyline || "").slice(0, 24),
-      ].join("|")
-    : "";
+  const fareResetKey = [
+    vehicleTypeKey,
+    routePlan
+      ? [
+          routePlan.selectedRouteIndex ?? 0,
+          routePlan.distanceMeters ?? "",
+          routePlan.distanceKm ?? "",
+          String(routePlan.routePolyline || "").slice(0, 24),
+        ].join("|")
+      : "",
+  ]
+    .filter(Boolean)
+    .join("::");
 
   const applyAutoFare = useCallback((value) => {
     if (priceTouchedRef.current || value == null) return;
@@ -100,6 +116,13 @@ const CreateRidePage = () => {
       refreshProfile();
     }, [refreshProfile])
   );
+
+  useEffect(() => {
+    priceTouchedRef.current = false;
+    setRideData((prev) =>
+      prev.ride_amount ? { ...prev, ride_amount: "" } : prev
+    );
+  }, [vehicleTypeKey]);
 
   const updateRideData = (field, value) => {
     if (field === "ride_amount") return;
@@ -155,16 +178,13 @@ const CreateRidePage = () => {
       return;
     }
 
-    const hasEndpoints =
-      (fromCoords?.lat != null && toCoords?.lat != null) ||
-      (rideData.from.trim() && rideData.to.trim());
-    if (hasEndpoints && !routePlan?.routePolyline) {
+    if (!routePlan?.routePolyline) {
       alertValidation("Select a route on the map before publishing.");
       return;
     }
 
+    setLoading(true);
     try {
-      setLoading(true);
       const token = await AsyncStorage.getItem("token");
       if (!token) {
         alertError("User not authenticated", "Sign in required");
@@ -182,7 +202,7 @@ const CreateRidePage = () => {
         ride_amount: Number(rideData.ride_amount),
         AlternatePhoneNumber: rideData.AlternatePhoneNumber?.trim() || undefined,
         CanCarryCourier: rideData.CanCarryCourier,
-        QuickReserve: rideData.QuickReserve,
+        QuickReserve: true,
         rideType: rideData.rideType,
         routePolyline: routePlan?.routePolyline || undefined,
         selectedRouteIndex: routePlan?.selectedRouteIndex ?? 0,
@@ -193,18 +213,27 @@ const CreateRidePage = () => {
       const response = await createRideApi(token, payload);
 
       if (response?.success) {
+        const newRideId =
+          response?.data?.ride?._id ||
+          response?.data?.ride?.id ||
+          response?.data?._id ||
+          null;
+
+        const goToDashboard = () => {
+          goToDashboardWithRideHighlight({
+            navigation,
+            rideId: newRideId,
+            label: "Your new ride",
+            setRefreshUpcomingrides,
+            setPendingHighlightRideId,
+            setPendingHighlightLabel,
+          });
+        };
+
         showAppAlert(
           "Ride published",
           "Your ride is live. Passengers can now find and join it.",
-          [
-            {
-              text: "OK",
-              onPress: () => {
-                setRefreshUpcomingrides((prev) => !prev);
-                navigation.navigate("Navigator", { screen: "Home" });
-              },
-            },
-          ],
+          [{ text: "OK", onPress: goToDashboard }],
           "success"
         );
       } else {
@@ -223,9 +252,33 @@ const CreateRidePage = () => {
     }
   };
 
-  const handleVehicleAdded = async () => {
+  const handleVehicleAdded = async (savedVehicle) => {
     priceTouchedRef.current = false;
-    await refreshProfile();
+
+    if (savedVehicle) {
+      const personalName = ProfileDetails?.data?.personalInfo?.name || "";
+      const nextVehicleInfo = mapApiVehicleToProfileInfo(savedVehicle, personalName);
+      SetProfileDetails((prev) => {
+        if (!prev?.data) {
+          return {
+            success: true,
+            data: {
+              personalInfo: { name: personalName },
+              vehicleInfo: nextVehicleInfo,
+            },
+          };
+        }
+        return {
+          ...prev,
+          data: {
+            ...prev.data,
+            vehicleInfo: nextVehicleInfo,
+          },
+        };
+      });
+    }
+
+    refreshProfile().catch(() => {});
     alertSuccess("Vehicle saved. You can create your ride now.");
   };
 
@@ -308,6 +361,7 @@ const CreateRidePage = () => {
       {!routeMapFullscreen ? (
         <FixedButton
           title="Publish ride"
+          loadingTitle="Publishing…"
           onPress={handlePress}
           loading={loading}
           disabled={loading}

@@ -2,6 +2,7 @@ const jwt = require("jsonwebtoken");
 const { JWT_EXPIRES_IN } = require("../config/jwt");
 const bcrypt = require("bcryptjs");
 const Admin = require("../models/adminModel");
+const { serializeAdminPublic } = require("../constants/adminPermissions");
 
 const register = async ({ name, email, mobile, password }) => {
   const adminCount = await Admin.countDocuments();
@@ -10,14 +11,23 @@ const register = async ({ name, email, mobile, password }) => {
       status: 403,
       body: {
         message:
-          "Only one admin is allowed. Use credentials from .env (ADMIN_EMAIL / ADMIN_PASSWORD).",
+          "Bootstrap admin already exists. Ask a super admin to create staff accounts.",
       },
     };
   }
   const exists = await Admin.findOne({ $or: [{ email }, { mobile }] });
   if (exists) return { status: 400, body: { message: "Admin already exists" } };
-  const admin = await Admin.create({ name, email, mobile, password });
-  return { status: 200, body: { message: "Admin registered successfully", adminId: admin._id } };
+  const admin = await Admin.create({
+    name,
+    email,
+    mobile,
+    password,
+    role: "super_admin",
+  });
+  return {
+    status: 200,
+    body: { message: "Admin registered successfully", adminId: admin._id },
+  };
 };
 
 const login = async ({ email, password }) => {
@@ -30,19 +40,30 @@ const login = async ({ email, password }) => {
       : "";
     return { status: 404, body: { message: `Admin not found.${hint}` } };
   }
+  if (admin.isActive === false) {
+    return { status: 403, body: { message: "This admin account is deactivated" } };
+  }
   const isMatch = await bcrypt.compare(password, admin.password);
   if (!isMatch) return { status: 401, body: { message: "Invalid credentials" } };
-  const token = jwt.sign({ id: admin._id, role: "admin" }, process.env.JWT_SECRET, {
-    expiresIn: JWT_EXPIRES_IN,
-  });
+  const token = jwt.sign(
+    { id: admin._id, role: "admin", adminRole: admin.role || "staff" },
+    process.env.JWT_SECRET,
+    { expiresIn: JWT_EXPIRES_IN }
+  );
   return {
     status: 200,
     body: {
       message: "Admin login successful",
       token,
-      admin: { id: admin._id, name: admin.name, email: admin.email, mobile: admin.mobile },
+      admin: serializeAdminPublic(admin),
     },
   };
 };
 
-module.exports = { register, login };
+const getCurrentAdmin = async (adminId) => {
+  const admin = await Admin.findById(adminId);
+  if (!admin) return { status: 404, body: { message: "Admin not found" } };
+  return { status: 200, body: { success: true, admin: serializeAdminPublic(admin) } };
+};
+
+module.exports = { register, login, getCurrentAdmin };

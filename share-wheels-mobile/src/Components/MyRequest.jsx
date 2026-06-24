@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useRef, useEffect } from "react";
+import React, { useState, useCallback, useRef } from "react";
 import {
   View,
   Text,
@@ -7,6 +7,8 @@ import {
   FlatList,
   Image,
   Alert,
+  RefreshControl,
+  ActivityIndicator,
 } from "react-native";
 import LinearGradient from "react-native-linear-gradient";
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -21,6 +23,7 @@ import carIcon from "../assets/caricon1.png";
 import BackButton from "../Components/BackButton";
 /* COMPONENTS */
 import RequestDetailPopover from "./ui/RequestDetailPopover";
+import RelatedRideDetailPopover from "./ui/RelatedRideDetailPopover";
 import RequestRelatedRidesSheet from "./ui/RequestRelatedRidesSheet";
 import { buildMyRequestDetail } from "../Utils/driverParticipantDetails";
 import { formatDisplayTime } from "../Utils/dateUtils";
@@ -39,6 +42,8 @@ import {
   filterOpenPassengerRequests,
   filterOpenCourierRequests,
   shouldRemoveMyRequestRow,
+  isRequestLockedToOtherDriver,
+  REQUEST_LOCKED_TO_DRIVER_MESSAGE,
 } from "../Utils/myRequestUtils";
 import { getApiErrorMessage } from "../Utils/apiErrors";
 import { formatRequestDate } from "../Utils";
@@ -52,6 +57,11 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { LAYOUT, getScrollBottomPadding } from "../theme/layout";
 import { useTheme } from "../context/ThemeContext";
 import { useThemedStyles } from "../theme/useThemedStyles";
+import { profileData } from "../Navigation/AuthNavigator";
+import {
+  bookingHighlightLabel,
+  goToDashboardWithRideHighlight,
+} from "../Utils/navigateToDashboardHighlight";
 
 const getRoleTheme = (c) => ({
   Passenger: {
@@ -162,11 +172,17 @@ const MyRequest = () => {
   const insets = useSafeAreaInsets();
   const { colors } = useTheme();
   const styles = useThemedStyles(createStyles);
+  const {
+    setRefreshUpcomingrides,
+    setPendingHighlightRideId,
+    setPendingHighlightLabel,
+  } = profileData();
   const ROLE_THEME = getRoleTheme(colors);
   const [activeTab, setActiveTab] = useState("Passenger");
   const [passengerRides, setPassengerRides] = useState([]);
   const [courierRides, setCourierRides] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [fetchError, setFetchError] = useState("");
 
   const [selectedRide, setSelectedRide] = useState(null);
@@ -175,20 +191,59 @@ const MyRequest = () => {
   const [popoverLoading, setPopoverLoading] = useState(false);
   const [joiningRideId, setJoiningRideId] = useState(null);
   const [deletingId, setDeletingId] = useState(null);
+  const [relatedRidePopoverVisible, setRelatedRidePopoverVisible] = useState(false);
+  const [relatedRidePreview, setRelatedRidePreview] = useState(null);
 
   const tabs = ["Passenger", "Courier"];
   const activeIndex = tabs.indexOf(activeTab);
 
-  const activeTabRef = useRef(activeTab);
-  useEffect(() => {
-    activeTabRef.current = activeTab;
-  }, [activeTab]);
+  const loadAllRequests = useCallback(async ({ showLoader = false } = {}) => {
+    if (showLoader) setLoading(true);
+    setFetchError("");
+
+    try {
+      const token = await AsyncStorage.getItem("token");
+      if (!token) {
+        setFetchError("Please sign in again.");
+        setPassengerRides([]);
+        setCourierRides([]);
+        return;
+      }
+
+      const [passengerRes, courierRes] = await Promise.all([
+        getMyPassengerRequests(token),
+        getMyCourierRequests(token),
+      ]);
+
+      setPassengerRides(
+        sortRequestsByPriority(
+          filterOpenPassengerRequests(
+            (passengerRes?.passengerRequests || []).map(mapPassengerRequest)
+          )
+        )
+      );
+      setCourierRides(
+        sortRequestsByPriority(
+          filterOpenCourierRequests(
+            (courierRes?.courierRequests || []).map(mapCourierRequest)
+          )
+        )
+      );
+    } catch (err) {
+      console.log("❌ MY REQUESTS ERROR:", err.message);
+      setFetchError(getApiErrorMessage(err, "Could not load requests."));
+      setPassengerRides([]);
+      setCourierRides([]);
+    } finally {
+      if (showLoader) setLoading(false);
+    }
+  }, []);
 
   const fetchPassengerRequests = useCallback(async ({ showLoader = true } = {}) => {
-    try {
-      if (showLoader) setLoading(true);
-      setFetchError("");
+    if (showLoader) setLoading(true);
+    setFetchError("");
 
+    try {
       const token = await AsyncStorage.getItem("token");
       if (!token) {
         setFetchError("Please sign in again.");
@@ -209,15 +264,15 @@ const MyRequest = () => {
       setFetchError(getApiErrorMessage(err, "Could not load passenger requests."));
       setPassengerRides([]);
     } finally {
-      setLoading(false);
+      if (showLoader) setLoading(false);
     }
   }, []);
 
   const fetchCourierRequests = useCallback(async ({ showLoader = true } = {}) => {
-    try {
-      if (showLoader) setLoading(true);
-      setFetchError("");
+    if (showLoader) setLoading(true);
+    setFetchError("");
 
+    try {
       const token = await AsyncStorage.getItem("token");
       if (!token) {
         setFetchError("Please sign in again.");
@@ -238,9 +293,20 @@ const MyRequest = () => {
       setFetchError(getApiErrorMessage(err, "Could not load courier requests."));
       setCourierRides([]);
     } finally {
-      setLoading(false);
+      if (showLoader) setLoading(false);
     }
   }, []);
+
+  const onRefresh = useCallback(async () => {
+    if (refreshing) return;
+    setRefreshing(true);
+    try {
+      await loadAllRequests({ showLoader: false });
+    } finally {
+      setRefreshing(false);
+      setLoading(false);
+    }
+  }, [loadAllRequests, refreshing]);
 
   const fetchActiveTabRequests = useCallback(() => {
     if (activeTab === "Courier") {
@@ -249,43 +315,35 @@ const MyRequest = () => {
     return fetchPassengerRequests();
   }, [activeTab, fetchCourierRequests, fetchPassengerRequests]);
 
+  const didInitialLoadRef = useRef(false);
+
   useFocusEffect(
     useCallback(() => {
       const paramTab = normalizeRequestTab(route.params?.activeTab, tabs);
 
       if (paramTab) {
         setActiveTab(paramTab);
-        if (paramTab === "Courier") {
-          fetchCourierRequests();
-        } else {
-          fetchPassengerRequests();
-        }
+        didInitialLoadRef.current = true;
+        loadAllRequests({ showLoader: true });
         return;
       }
 
-      const currentTab = activeTabRef.current;
-      if (currentTab === "Courier") {
-        fetchCourierRequests({ showLoader: false });
-      } else {
-        fetchPassengerRequests({ showLoader: false });
+      if (!didInitialLoadRef.current) {
+        didInitialLoadRef.current = true;
+        loadAllRequests({ showLoader: true });
+        return;
       }
-    }, [route.params?.activeTab, fetchCourierRequests, fetchPassengerRequests])
+
+      loadAllRequests({ showLoader: false });
+    }, [route.params?.activeTab, loadAllRequests])
   );
 
   useMyRequestsSocket(
     useCallback(
-      (payload) => {
-        if (payload) {
-          setPassengerRides((prev) =>
-            prev.filter((row) => !shouldRemoveMyRequestRow(row, payload))
-          );
-          setCourierRides((prev) =>
-            prev.filter((row) => !shouldRemoveMyRequestRow(row, payload))
-          );
-        }
-        fetchActiveTabRequests();
+      (_payload) => {
+        loadAllRequests({ showLoader: false });
       },
-      [fetchActiveTabRequests]
+      [loadAllRequests]
     )
   );
 
@@ -343,23 +401,28 @@ const MyRequest = () => {
 
   const closeSheet = () => {
     setSheetVisible(false);
+    setRelatedRidePopoverVisible(false);
+    setRelatedRidePreview(null);
     setSelectedRide(null);
     setJoiningRideId(null);
   };
 
+  const closeRelatedRidePopover = () => {
+    setRelatedRidePopoverVisible(false);
+    setRelatedRidePreview(null);
+  };
+
   const handleViewRide = (ride) => {
-    setPopoverVisible(false);
-    setSheetVisible(false);
-    const segFrom = selectedRide?.from || selectedRide?.raw?.from;
-    const segTo = selectedRide?.to || selectedRide?.raw?.to;
-    setSelectedRide(null);
-    navigation.navigate("RideDetails", {
-      ride,
-      ...(segFrom && segTo ? { searchSegment: { from: segFrom, to: segTo } } : {}),
-    });
+    setRelatedRidePreview(ride);
+    setRelatedRidePopoverVisible(true);
   };
 
   const handleJoinPassenger = async (ride, requestItem) => {
+    if (joiningRideId) return;
+    if (isRequestLockedToOtherDriver(requestItem, ride._id)) {
+      Alert.alert("Already linked", REQUEST_LOCKED_TO_DRIVER_MESSAGE);
+      return;
+    }
     const token = await AsyncStorage.getItem("token");
     if (!token) {
       Alert.alert("Sign in required", "Please log in to request a seat.");
@@ -374,20 +437,39 @@ const MyRequest = () => {
         standalonePassengerRideId: requestItem?.id || requestItem?.raw?.requestId,
         from: requestItem?.from || requestItem?.raw?.from,
         to: requestItem?.to || requestItem?.raw?.to,
+        amount_will: requestItem?.raw?.amount ?? requestItem?.raw?.amount_will,
       });
       if (response?.success) {
-        const requestId = requestItem?.id || requestItem?.raw?.requestId;
-        if (requestId) {
-          setPassengerRides((prev) =>
-            prev.filter((row) => String(row.id) !== String(requestId))
-          );
+        if (response.bookingStatus === "confirmed") {
+          const requestId = requestItem?.id || requestItem?.raw?.requestId;
+          if (requestId) {
+            setPassengerRides((prev) =>
+              prev.filter((row) => String(row.id) !== String(requestId))
+            );
+          }
         }
-        Alert.alert(
-          response.bookingStatus === "confirmed" ? "Booking confirmed" : "Request sent",
-          response.message || "Your seat request was sent to the driver."
-        );
+        const title =
+          response.bookingStatus === "confirmed" ? "Booking confirmed" : "Request sent";
         await fetchActiveTabRequests();
         closeSheet();
+        Alert.alert(
+          title,
+          response.message || "Your seat request was sent to the driver.",
+          [
+            {
+              text: "OK",
+              onPress: () =>
+                goToDashboardWithRideHighlight({
+                  navigation,
+                  rideId: ride._id,
+                  label: bookingHighlightLabel(response.bookingStatus),
+                  setRefreshUpcomingrides,
+                  setPendingHighlightRideId,
+                  setPendingHighlightLabel,
+                }),
+            },
+          ]
+        );
       } else {
         Alert.alert(
           "Request failed",
@@ -402,6 +484,11 @@ const MyRequest = () => {
   };
 
   const handleJoinCourier = async (ride, requestItem) => {
+    if (joiningRideId) return;
+    if (isRequestLockedToOtherDriver(requestItem, ride._id)) {
+      Alert.alert("Already linked", REQUEST_LOCKED_TO_DRIVER_MESSAGE);
+      return;
+    }
     const raw = requestItem?.raw || {};
     const recv = raw.receiver || {};
     if (!raw.courier_img) {
@@ -436,23 +523,42 @@ const MyRequest = () => {
         date: deliveryDate,
         receiver_name: recv.name,
         receiver_mobile: recv.mobile,
-        receiver_alternate_mobile: recv.alternate_mobile || recv.alternateMobile,
+        receiver_alternate_mobile:
+          recv.alternate_mobile || recv.alternateMobile || recv.mobile,
         receiver_address: recv.Address || recv.address,
         standaloneCourierId: requestItem?.id || raw.requestId,
       });
       if (response?.success) {
-        const requestId = requestItem?.id || raw.requestId;
-        if (requestId) {
-          setCourierRides((prev) =>
-            prev.filter((row) => String(row.id) !== String(requestId))
-          );
+        if (response.bookingStatus === "confirmed") {
+          const requestId = requestItem?.id || raw.requestId;
+          if (requestId) {
+            setCourierRides((prev) =>
+              prev.filter((row) => String(row.id) !== String(requestId))
+            );
+          }
         }
-        Alert.alert(
-          response.bookingStatus === "confirmed" ? "Booking confirmed" : "Request sent",
-          response.message || "Courier request sent to the driver."
-        );
+        const title =
+          response.bookingStatus === "confirmed" ? "Booking confirmed" : "Request sent";
         await fetchActiveTabRequests();
         closeSheet();
+        Alert.alert(
+          title,
+          response.message || "Courier request sent to the driver.",
+          [
+            {
+              text: "OK",
+              onPress: () =>
+                goToDashboardWithRideHighlight({
+                  navigation,
+                  rideId: ride._id,
+                  label: bookingHighlightLabel(response.bookingStatus),
+                  setRefreshUpcomingrides,
+                  setPendingHighlightRideId,
+                  setPendingHighlightLabel,
+                }),
+            },
+          ]
+        );
       } else {
         Alert.alert(
           "Request failed",
@@ -468,6 +574,35 @@ const MyRequest = () => {
 
   const canDeleteRequest = (item) =>
     String(item?.status || "").toLowerCase() === "pending";
+
+  const canEditRequest = (item) => {
+    if (!canDeleteRequest(item)) return false;
+    const kind = String(item?.requestKind || "").toLowerCase();
+    return kind === "standalone" || kind === "courier";
+  };
+
+  const handleEditRequest = (item) => {
+    if (!canEditRequest(item)) {
+      Alert.alert(
+        "Cannot edit",
+        "Only pending standalone requests can be edited."
+      );
+      return;
+    }
+    const editRequest = {
+      requestId: item.id,
+      from: item.from,
+      to: item.to,
+      seats: item.raw?.seats,
+      amount: item.raw?.amount ?? item.raw?.amount_will,
+      raw: item.raw || {},
+    };
+    if (item.role === "Courier") {
+      navigation.navigate("CourierRequest", { editRequest });
+      return;
+    }
+    navigation.navigate("PassengerRequest", { editRequest });
+  };
 
   const handleDeleteRequest = (item) => {
     if (!canDeleteRequest(item)) {
@@ -512,9 +647,26 @@ const MyRequest = () => {
     );
   };
 
+  const handleJoinFromRelatedRidePopover = (ride) => {
+    closeRelatedRidePopover();
+    handleJoinRide(ride);
+  };
+
   const handleJoinRide = (ride) => {
-    if (!selectedRide) return;
-    if (selectedRide.requestKind === "ride_join" || ride.passengerRequestPending) {
+    if (!selectedRide || joiningRideId) return;
+    if (selectedRide.requestKind === "ride_join") {
+      handleViewRide(ride);
+      return;
+    }
+    if (isRequestLockedToOtherDriver(selectedRide, ride._id)) {
+      Alert.alert("Already linked", REQUEST_LOCKED_TO_DRIVER_MESSAGE);
+      return;
+    }
+    const pending =
+      selectedRide.role === "Courier"
+        ? ride.courierRequestPending
+        : ride.passengerRequestPending;
+    if (pending) {
       handleViewRide(ride);
       return;
     }
@@ -567,6 +719,17 @@ const MyRequest = () => {
                 ) : (
                   <Icon name="trash-outline" size={18} color={colors.errorText} />
                 )}
+              </TouchableOpacity>
+            ) : null}
+            {canEditRequest(item) ? (
+              <TouchableOpacity
+                style={styles.editBtn}
+                onPress={() => handleEditRequest(item)}
+                disabled={deletingId === item.id}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                activeOpacity={0.75}
+              >
+                <Icon name="create-outline" size={17} color={colors.infoText} />
               </TouchableOpacity>
             ) : null}
             <View style={[styles.statusChip, { backgroundColor: theme.statusSoft }]}>
@@ -645,6 +808,20 @@ const MyRequest = () => {
       <View style={styles.header}>
         <BackButton />
         <Text style={styles.headerTitle}>My Request</Text>
+        <TouchableOpacity
+          style={styles.refreshBtn}
+          onPress={onRefresh}
+          disabled={refreshing}
+          accessibilityRole="button"
+          accessibilityLabel="Refresh my requests"
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+        >
+          {refreshing ? (
+            <ActivityIndicator size="small" color={colors.primary} />
+          ) : (
+            <Icon name="refresh" size={22} color={colors.primary} />
+          )}
+        </TouchableOpacity>
       </View>
 
       <AnimatedLoad
@@ -666,19 +843,48 @@ const MyRequest = () => {
         onChange={handleTabChange}
       />
 
-      <FadePanel activeKey={activeTab}>
+      <FadePanel activeKey={activeTab} style={{ flex: 1 }}>
         <FlatList
+          style={{ flex: 1 }}
           data={filteredRides}
           keyExtractor={(item, index) => `${item.id}-${index}`}
           renderItem={renderRide}
           showsVerticalScrollIndicator={false}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              colors={[colors.primary]}
+              tintColor={colors.primary}
+            />
+          }
           ListEmptyComponent={
-            <Text style={styles.emptyText}>
-              {fetchError ? "" : "No Requests Found"}
-            </Text>
+            <View style={styles.emptyWrap}>
+              <Text style={styles.emptyText}>
+                {fetchError ? "" : "No Requests Found"}
+              </Text>
+              {!fetchError ? (
+                <TouchableOpacity
+                  style={styles.emptyRefreshBtn}
+                  onPress={onRefresh}
+                  disabled={refreshing}
+                  activeOpacity={0.85}
+                >
+                  {refreshing ? (
+                    <ActivityIndicator size="small" color={colors.primary} />
+                  ) : (
+                    <>
+                      <Icon name="refresh" size={16} color={colors.primary} />
+                      <Text style={styles.emptyRefreshText}>Refresh</Text>
+                    </>
+                  )}
+                </TouchableOpacity>
+              ) : null}
+            </View>
           }
           contentContainerStyle={{
             paddingBottom: getScrollBottomPadding(insets.bottom),
+            flexGrow: 1,
           }}
         />
       </FadePanel>
@@ -698,6 +904,17 @@ const MyRequest = () => {
         onViewRide={handleViewRide}
         onJoinRide={handleJoinRide}
       />
+
+      <RelatedRideDetailPopover
+        visible={relatedRidePopoverVisible}
+        ride={relatedRidePreview}
+        requestContext={selectedRide}
+        joiningRideId={joiningRideId}
+        onClose={closeRelatedRidePopover}
+        onJoinRide={
+          selectedRide?.requestKind === "ride_join" ? undefined : handleJoinFromRelatedRidePopover
+        }
+      />
       </AnimatedLoad>
     </ScreenContainer>
   );
@@ -715,24 +932,60 @@ const createStyles = (c) =>
     paddingBottom: LAYOUT.spacing.sm,
   },
 
- header: {
-  flexDirection: "row",
-  alignItems: "center",
-  marginBottom: 16,
-},
+  header: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 16,
+  },
 
-headerTitle: {
-  fontSize: LAYOUT.font.title,
-  fontWeight: "800",
-  marginLeft: 10,
-  color: c.text,
-},
+  headerTitle: {
+    flex: 1,
+    fontSize: LAYOUT.font.title,
+    fontWeight: "800",
+    marginLeft: 10,
+    color: c.text,
+  },
+
+  refreshBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: c.primaryMuted,
+    borderWidth: 1,
+    borderColor: c.border,
+  },
+
+  emptyWrap: {
+    alignItems: "center",
+    marginTop: 40,
+    paddingHorizontal: 16,
+  },
 
   emptyText: {
     textAlign: "center",
-    marginTop: 40,
     color: c.textMuted,
     fontSize: 15,
+    marginBottom: 12,
+  },
+
+  emptyRefreshBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 999,
+    backgroundColor: c.primaryMuted,
+    borderWidth: 1,
+    borderColor: c.border,
+  },
+
+  emptyRefreshText: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: c.primary,
   },
 
   errorText: {
@@ -816,6 +1069,16 @@ headerTitle: {
     fontSize: 14,
     fontWeight: "700",
     color: c.errorText,
+  },
+  editBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 10,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: c.infoBg,
+    borderWidth: 1,
+    borderColor: c.infoBorder,
   },
 
   routeRow: {

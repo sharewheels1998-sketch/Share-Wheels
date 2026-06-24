@@ -1,17 +1,64 @@
 /**
  * Themed in-app alerts and toasts. Register via AppAlertProvider in App.jsx.
- * Drop-in helpers for forms — same call shape as Alert.alert where possible.
+ * Installs a global Alert.alert override when the bridge is active.
  */
 
 let bridge = null;
+let nativeAlertInstalled = false;
+let originalAlert = null;
+
+const inferVariant = (title = "", message = "") => {
+  const text = `${title} ${message}`.toLowerCase();
+  if (
+    /error|failed|could not|cannot|invalid|denied|unavailable|something went wrong/.test(
+      text
+    )
+  ) {
+    return "error";
+  }
+  if (/success|updated|done|activated|confirmed|saved|sent|removed/.test(text)) {
+    return "success";
+  }
+  if (/confirm|are you sure|warning|check your|please wait|cancel/.test(text)) {
+    return "warning";
+  }
+  return "info";
+};
 
 export const registerAppAlertBridge = (handlers) => {
   bridge = handlers;
+  installThemedAlertOverride();
 };
 
 export const unregisterAppAlertBridge = () => {
   bridge = null;
+  if (nativeAlertInstalled && originalAlert) {
+    const { Alert } = require("react-native");
+    Alert.alert = originalAlert;
+    nativeAlertInstalled = false;
+  }
 };
+
+export function installThemedAlertOverride() {
+  if (nativeAlertInstalled || !bridge?.showAlert) return;
+  const { Alert } = require("react-native");
+  originalAlert = Alert.alert.bind(Alert);
+  Alert.alert = (title, message, buttons, options) => {
+    if (bridge?.showAlert) {
+      const variant =
+        options?.variant || inferVariant(String(title || ""), String(message || ""));
+      bridge.showAlert({
+        title: title || "Notice",
+        message: message || "",
+        buttons,
+        variant,
+      });
+      return;
+    }
+    originalAlert(title, message, buttons, options);
+  };
+  nativeAlertInstalled = true;
+}
 
 /**
  * @param {string} title

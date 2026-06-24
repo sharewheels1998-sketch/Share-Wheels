@@ -14,7 +14,10 @@ const {
   closeStandaloneRequestsAfterJoin,
   closeSiblingStandalonesAfterEnroutePick,
   collectAssignedRequestDocIds,
-  dedupeEnrouteRequestsByCreator,
+  dedupeEnrouteRequestsByRequestId,
+  resolveCourierLockedRideId,
+  resolvePassengerLockedRideId,
+  LOCKED_TO_OTHER_DRIVER_MESSAGE,
 } = require("../utils/participantRequestCleanup");
 const {
   emitToUser,
@@ -38,6 +41,22 @@ const {
   getActiveRideRowById,
 } = require("./rideTrackingService");
 const { expireStaleOpenRequests, OPEN_PASSENGER_FILTER, OPEN_COURIER_FILTER } = require("./requestExpiryService");
+
+const isPassengerOpenForDriverEnroute = (doc, driverRideId) => {
+  if (!doc || doc.status !== "pending") return false;
+  const lockedRideId = resolvePassengerLockedRideId(doc);
+  if (!lockedRideId) return true;
+  return !!(driverRideId && lockedRideId === String(driverRideId));
+};
+
+const isCourierOpenForDriverEnroute = (doc, driverRideId) => {
+  if (!doc) return false;
+  const status = String(doc.courier_status || "");
+  if (!["pending", "request_to_driver"].includes(status)) return false;
+  const lockedRideId = resolveCourierLockedRideId(doc);
+  if (!lockedRideId) return true;
+  return !!(driverRideId && lockedRideId === String(driverRideId));
+};
 const { clearRideChatMessages } = require("./rideChatService");
 const { withRidePickLock } = require("../utils/ridePickLock");
 const {
@@ -58,6 +77,15 @@ const {
   requestMatchesDriverCorridor,
 } = require("../utils/enrouteCorridorUtils");
 const googleMapsService = require("./googleMapsService");
+
+/** Hide phone numbers until the driver picks the request onto their ride. */
+const sanitizeEnrouteReceiverDetails = (receiver) => {
+  if (!receiver || typeof receiver !== "object") return receiver;
+  const copy = { ...receiver };
+  delete copy.mobile;
+  delete copy.alternate_mobile;
+  return copy;
+};
 const { getActiveBookedSeats } = require("../utils/rideSeatUtils");
 
 const getBookedSeats = getActiveBookedSeats;
@@ -101,20 +129,24 @@ const acceptPassengerRequest = async (user, { rideId, passenger_userId }) => {
 
   let segFrom = String(reqObj.from || "").trim() || ride.from;
   let segTo = String(reqObj.to || "").trim() || ride.to;
+  let linkedPassengerRideId = null;
   const fullRideSegment =
     segFrom.toLowerCase() === String(ride.from || "").trim().toLowerCase() &&
     segTo.toLowerCase() === String(ride.to || "").trim().toLowerCase();
+  const linkedPassengerRide = await PassengerRide.findOne({
+    creator: reqObj.userId,
+    $or: [
+      { "assigned_to.rideId": ride._id },
+      { join_requested_By: { $elemMatch: { rideId: ride._id } } },
+    ],
+  })
+    .sort({ updatedAt: -1 })
+    .select("_id from to")
+    .lean();
+  if (linkedPassengerRide?._id) {
+    linkedPassengerRideId = String(linkedPassengerRide._id);
+  }
   if (fullRideSegment) {
-    const linkedPassengerRide = await PassengerRide.findOne({
-      creator: reqObj.userId,
-      $or: [
-        { "assigned_to.rideId": ride._id },
-        { join_requested_By: { $elemMatch: { rideId: ride._id } } },
-      ],
-    })
-      .sort({ updatedAt: -1 })
-      .select("from to")
-      .lean();
     if (linkedPassengerRide?.from && linkedPassengerRide?.to) {
       segFrom = linkedPassengerRide.from;
       segTo = linkedPassengerRide.to;
@@ -139,7 +171,9 @@ const acceptPassengerRequest = async (user, { rideId, passenger_userId }) => {
   ride.availableSeats -= seatsNeeded;
   ride.passenger_requested_ride = ride.passenger_requested_ride.filter((item) => item.userId.toString() !== passenger_userId.toString());
   await ride.save();
-  await closeStandaloneRequestsAfterJoin(passenger_userId, ride);
+  await closeStandaloneRequestsAfterJoin(passenger_userId, ride, {
+    explicitPassengerRideId: linkedPassengerRideId,
+  });
   await UserRides.findOneAndUpdate(
     { creator: passenger_userId },
     {
@@ -177,8 +211,6 @@ const acceptPassengerRequest = async (user, { rideId, passenger_userId }) => {
   emitMyRequestsUpdated(passenger_userId, {
     action: "ride_request_accepted",
     rideId: ride._id.toString(),
-    from: ride.from,
-    to: ride.to,
     ...(cancelledStandalone[0]
       ? { passengerRideId: cancelledStandalone[0]._id.toString() }
       : {}),
@@ -202,6 +234,10 @@ const rejectPassengerRequest = async (user, { rideId, passenger_userId }) => {
   await UserRides.findOneAndUpdate(
     { creator: passenger_userId },
     { $pull: { my_pending_ride_requests: { rideId: ride._id } } }
+  );
+  await PassengerRide.updateMany(
+    { creator: passenger_userId, "join_requested_By.rideId": ride._id },
+    { $pull: { join_requested_By: { rideId: ride._id } } }
   );
   const driver = await User.findById(user._id);
   await notifyUser(passenger_userId, {
@@ -441,18 +477,16 @@ const enrouteRequests = async (user, { from, to, date, rideId, stopovers, routeP
   let stopoverRows = normalizeStopoverRows(stopovers);
   let polyline = String(routePolyline || "").trim();
   let rideDayDate = date;
-  let excludeUserIds = new Set();
   let excludePassengerRideIds = new Set();
   let excludeCourierIds = new Set();
 
   if (rideId && mongoose.Types.ObjectId.isValid(rideId)) {
     const ride = await Ride.findById(rideId)
       .select(
-        "passenger_requested_ride.userId passengers.userId users_request_Couriers.userId all_deliveries.userId stopovers from to routePolyline date"
+        "stopovers from to routePolyline date"
       )
       .lean();
     if (ride) {
-      collectRideParticipantUserIds(ride).forEach((id) => excludeUserIds.add(id));
       const assigned = await collectAssignedRequestDocIds(rideId);
       assigned.passengerRideIds.forEach((id) => excludePassengerRideIds.add(id));
       assigned.courierIds.forEach((id) => excludeCourierIds.add(id));
@@ -482,9 +516,6 @@ const enrouteRequests = async (user, { from, to, date, rideId, stopovers, routeP
     loadPolylineTowns: loadPolylineTownLabels,
   });
 
-  const excludeCreatorIds = Array.from(excludeUserIds).filter((id) =>
-    mongoose.Types.ObjectId.isValid(id)
-  );
   const excludePassengerIds = Array.from(excludePassengerRideIds).filter((id) =>
     mongoose.Types.ObjectId.isValid(id)
   );
@@ -492,17 +523,15 @@ const enrouteRequests = async (user, { from, to, date, rideId, stopovers, routeP
     mongoose.Types.ObjectId.isValid(id)
   );
 
-  const excludeCreatorObjectIds = [
-    user._id,
-    ...excludeCreatorIds.map((id) => new mongoose.Types.ObjectId(id)),
-  ];
-
   const matchesCorridor = (reqFrom, reqTo) =>
     requestMatchesDriverCorridor(reqFrom, reqTo, corridor, fromTrim, toTrim);
 
+  const driverRideIdStr =
+    rideId && mongoose.Types.ObjectId.isValid(rideId) ? String(rideId) : null;
+
   const passengers = await PassengerRide.find({
     ...OPEN_PASSENGER_FILTER,
-    creator: { $nin: excludeCreatorObjectIds },
+    creator: { $ne: user._id },
     ...(excludePassengerIds.length
       ? { _id: { $nin: excludePassengerIds.map((id) => new mongoose.Types.ObjectId(id)) } }
       : {}),
@@ -512,8 +541,8 @@ const enrouteRequests = async (user, { from, to, date, rideId, stopovers, routeP
   const passengerRequests = passengers
     .filter(
       (p) =>
-        !excludeUserIds.has(String(p.creator?._id || p.creator)) &&
         !excludePassengerRideIds.has(String(p._id)) &&
+        isPassengerOpenForDriverEnroute(p, driverRideIdStr) &&
         matchesCorridor(p.from, p.to)
     )
     .map((p) => ({
@@ -534,7 +563,7 @@ const enrouteRequests = async (user, { from, to, date, rideId, stopovers, routeP
 
   const couriers = await Courier.find({
     ...OPEN_COURIER_FILTER,
-    creator: { $nin: excludeCreatorObjectIds },
+    creator: { $ne: user._id },
     ...(excludeCourierDocIds.length
       ? { _id: { $nin: excludeCourierDocIds.map((id) => new mongoose.Types.ObjectId(id)) } }
       : {}),
@@ -544,8 +573,8 @@ const enrouteRequests = async (user, { from, to, date, rideId, stopovers, routeP
   const courierRequests = couriers
     .filter(
       (c) =>
-        !excludeUserIds.has(String(c.creator?._id || c.creator)) &&
         !excludeCourierIds.has(String(c._id)) &&
+        isCourierOpenForDriverEnroute(c, driverRideIdStr) &&
         matchesCorridor(c.from, c.to)
     )
     .map((c) => ({
@@ -564,9 +593,11 @@ const enrouteRequests = async (user, { from, to, date, rideId, stopovers, routeP
     to: c.to,
     date: c.date,
     courier_status: c.courier_status,
-    courier_receiver_details: c.courier_receiver_details,
+    courier_receiver_details: sanitizeEnrouteReceiverDetails(
+      c.courier_receiver_details
+    ),
   }));
-  const allRequests = dedupeEnrouteRequestsByCreator([
+  const allRequests = dedupeEnrouteRequestsByRequestId([
     ...passengerRequests,
     ...courierRequests,
   ]);
@@ -591,6 +622,41 @@ const pickCourier = async (user, { rideId, courierId }) => {
   }
 
   return withRidePickLock(rideId, async () => {
+  const courier = await Courier.findById(courierId);
+  if (!courier) {
+    return {
+      status: 404,
+      body: {
+        success: false,
+        message:
+          "This request is no longer available. It may have already been picked by another driver.",
+        code: "ALREADY_PICKED",
+      },
+    };
+  }
+  if (courier.courier_status !== "pending" && courier.courier_status !== "request_to_driver") {
+    return {
+      status: 409,
+      body: {
+        success: false,
+        message: LOCKED_TO_OTHER_DRIVER_MESSAGE,
+        code: "ALREADY_PICKED",
+      },
+    };
+  }
+
+  const lockedRideId = resolveCourierLockedRideId(courier);
+  if (lockedRideId && lockedRideId !== String(rideId)) {
+    return {
+      status: 409,
+      body: {
+        success: false,
+        message: LOCKED_TO_OTHER_DRIVER_MESSAGE,
+        code: "ALREADY_PICKED",
+      },
+    };
+  }
+
   const entitlement = await driverSubscriptionService.assertCanPickEnroute(
     user._id,
     rideId
@@ -609,9 +675,7 @@ const pickCourier = async (user, { rideId, courierId }) => {
 
   let ride = await Ride.findById(rideId);
   if (!ride) return { status: 404, body: { success: false, message: "Ride not found" } };
-  const courier = await Courier.findById(courierId);
-  if (!courier) return { status: 404, body: { success: false, message: "Courier not found" } };
-  if (courier.courier_status !== "pending" && courier.courier_status !== "request_to_driver") return { status: 400, body: { success: false, message: "Courier already assigned or completed" } };
+
   if (ride.creator.toString() !== user._id.toString()) {
     return { status: 403, body: { success: false, message: "Unauthorized" } };
   }
@@ -650,7 +714,14 @@ const pickCourier = async (user, { rideId, courierId }) => {
     { new: true }
   );
   if (!claimedCourier) {
-    return { status: 400, body: { success: false, message: "Courier already assigned or completed" } };
+    return {
+      status: 409,
+      body: {
+        success: false,
+        message: LOCKED_TO_OTHER_DRIVER_MESSAGE,
+        code: "ALREADY_PICKED",
+      },
+    };
   }
 
   const courierEntry = {
@@ -752,8 +823,6 @@ const pickCourier = async (user, { rideId, courierId }) => {
     action: "courier_assigned",
     courierId: claimedCourier._id.toString(),
     rideId: ride._id.toString(),
-    from: ride.from,
-    to: ride.to,
   });
   emitEnrouteRequestRemoved(ride.from, ride.to, toEnrouteDateKey(ride.date), {
     courierId: claimedCourier._id.toString(),

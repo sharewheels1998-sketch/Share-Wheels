@@ -1,39 +1,89 @@
 /**
  * Normalize fare display across driver rides, passenger seats, and courier deliveries.
+ * Prefers backend-computed admin tier fares (displayFare) over stale stored amounts.
  */
 import {
   passengerCountsTowardEarnings,
   courierCountsTowardEarnings,
 } from "./participantTripStatus";
 
+const positiveNumber = (value) => {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? n : null;
+};
+
+const pickStoredAmount = (item, keys = []) => {
+  if (!item) return 0;
+  for (const key of keys) {
+    const direct = positiveNumber(item[key]);
+    if (direct != null) return direct;
+    const nested = positiveNumber(item.activeData?.[key]);
+    if (nested != null) return nested;
+  }
+  return 0;
+};
+
+const pickParticipantFare = (item, storedKeys = []) => {
+  if (!item) return 0;
+
+  const displayFare = positiveNumber(item.displayFare);
+  if (displayFare != null) return displayFare;
+
+  const computed = positiveNumber(item.computedSegmentFare);
+  if (computed != null) return computed;
+
+  const perSeat = positiveNumber(item.perSeatFare);
+  if (perSeat != null) {
+    const seats = Math.max(1, Number(item.requires_seats) || 1);
+    return Math.round(perSeat * seats);
+  }
+
+  return pickStoredAmount(item, storedKeys);
+};
+
 export const getPassengerFare = (item) => {
   if (!item) return 0;
-  return Number(
-    item.ride_amount ??
-      item.activeData?.ride_amount ??
-      item.amount ??
-      item.amount_will ??
-      0
-  );
+  // Agreed passenger total always wins over stopover segment recalculation.
+  const stored = pickStoredAmount(item, ["ride_amount", "amount", "amount_will"]);
+  if (stored > 0) return stored;
+  const displayFare = positiveNumber(item.displayFare);
+  if (displayFare != null) return displayFare;
+  const perSeat = positiveNumber(item.perSeatFare);
+  if (perSeat != null) {
+    const seats = Math.max(1, Number(item.requires_seats) || 1);
+    return Math.round(perSeat * seats);
+  }
+  return positiveNumber(item.computedSegmentFare) ?? 0;
 };
 
 export const getCourierFare = (item) => {
   if (!item) return 0;
-  return Number(
-    item.amount_will ??
-      item.activeData?.amount_will ??
-      item.amount ??
-      item.ride_amount ??
-      0
-  );
+  // User-declared courier price always wins over stopover segment recalculation.
+  const stored = pickStoredAmount(item, ["amount_will", "amount", "ride_amount"]);
+  if (stored > 0) return stored;
+  const displayFare = positiveNumber(item.displayFare);
+  if (displayFare != null) return displayFare;
+  return positiveNumber(item.computedSegmentFare) ?? 0;
 };
 
 /** Ride card / upcoming list by role */
 export const getRideDisplayFare = (ride) => {
   if (!ride) return 0;
+
+  const viewerFare = positiveNumber(ride.viewerDisplayFare);
+  if (viewerFare != null) return viewerFare;
+
+  // Passenger/courier agreed prices before any recalculated displayFare.
   if (ride.myRole === "passenger") return getPassengerFare(ride);
   if (ride.myRole === "courier") return getCourierFare(ride);
-  return Number(ride.ride_amount ?? 0);
+
+  const displayFare = positiveNumber(ride.displayFare);
+  if (displayFare != null) return displayFare;
+
+  const perSeat = positiveNumber(ride.perSeatFare);
+  if (perSeat != null) return perSeat;
+
+  return positiveNumber(ride.ride_amount) ?? 0;
 };
 
 export const formatRupee = (amount) => `₹${Number(amount ?? 0)}`;

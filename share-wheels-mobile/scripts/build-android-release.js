@@ -1,5 +1,5 @@
 /**
- * Builds a signed release APK using .env.production (production API URL).
+ * Builds a signed release APK using PRODUCTION_URL from `.env`.
  * On Windows, copies to C:\swb first to avoid 260-char native build path limits.
  *
  * Usage:
@@ -89,9 +89,9 @@ const copyArtifactToRoot = () => {
 };
 
 try {
-  if (!fs.existsSync(path.join(ROOT, ".env.production"))) {
+  if (!fs.existsSync(path.join(ROOT, ".env"))) {
     throw new Error(
-      "Missing .env.production — copy .env.example and set PRODUCTION_URL + GOOGLE_MAPS_API_KEY"
+      "Missing .env — set PRODUCTION_URL and GOOGLE_MAPS_API_KEY before release build"
     );
   }
   clearStaleAutolinkingCache(ROOT);

@@ -14,6 +14,7 @@ const handle = async (res, fn) => {
 module.exports = {
   register: async (req, res) => handle(res, () => adminService.register(req.body)),
   login: async (req, res) => handle(res, () => adminService.login(req.body)),
+  me: async (req, res) => handle(res, () => adminService.getCurrentAdmin(req.admin._id)),
   dashboardStats: async (req, res) => handle(res, () => adminDashboardService.getDashboardStats()),
   listUsers: async (req, res) => handle(res, () => adminDashboardService.listUsers(req.query)),
   createUser: async (req, res) => handle(res, () => adminUserService.createUser(req.body)),

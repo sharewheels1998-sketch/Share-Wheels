@@ -35,7 +35,7 @@ const VARIANT_META = {
   error: { icon: "alert-circle", accentKey: "error" },
 };
 
-const TOAST_DURATION_MS = 3200;
+const TOAST_DURATION_MS = 3600;
 
 export const AppAlertProvider = ({ children }) => {
   const insets = useSafeAreaInsets();
@@ -43,6 +43,8 @@ export const AppAlertProvider = ({ children }) => {
   const [dialog, setDialog] = useState(null);
   const [toast, setToast] = useState(null);
   const toastOpacity = useRef(new Animated.Value(0)).current;
+  const dialogScale = useRef(new Animated.Value(0.92)).current;
+  const dialogOpacity = useRef(new Animated.Value(0)).current;
   const toastTimer = useRef(null);
 
   const dismissToast = useCallback(() => {
@@ -72,9 +74,7 @@ export const AppAlertProvider = ({ children }) => {
 
   const showAlert = useCallback(({ title, message, buttons, variant = "info" }) => {
     const normalized =
-      Array.isArray(buttons) && buttons.length
-        ? buttons
-        : [{ text: "OK" }];
+      Array.isArray(buttons) && buttons.length ? buttons : [{ text: "OK" }];
     setDialog({
       title: title || "Notice",
       message: message || "",
@@ -87,6 +87,27 @@ export const AppAlertProvider = ({ children }) => {
     registerAppAlertBridge({ showAlert, showToast });
     return () => unregisterAppAlertBridge();
   }, [showAlert, showToast]);
+
+  useEffect(() => {
+    if (!dialog) {
+      dialogScale.setValue(0.92);
+      dialogOpacity.setValue(0);
+      return;
+    }
+    Animated.parallel([
+      Animated.spring(dialogScale, {
+        toValue: 1,
+        damping: 16,
+        stiffness: 220,
+        useNativeDriver: true,
+      }),
+      Animated.timing(dialogOpacity, {
+        toValue: 1,
+        duration: 180,
+        useNativeDriver: true,
+      }),
+    ]).start();
+  }, [dialog, dialogScale, dialogOpacity]);
 
   useEffect(
     () => () => {
@@ -119,6 +140,10 @@ export const AppAlertProvider = ({ children }) => {
     error: { bg: colors.errorBg, text: colors.errorText },
   }[toastMeta.accentKey];
 
+  const buttonRow =
+    dialog?.buttons?.length === 2 &&
+    dialog.buttons.some((b) => b.style === "cancel");
+
   return (
     <AppAlertContext.Provider value={value}>
       {children}
@@ -126,22 +151,25 @@ export const AppAlertProvider = ({ children }) => {
       <Modal
         visible={!!dialog}
         transparent
-        animationType="fade"
+        animationType="none"
         onRequestClose={closeDialog}
+        statusBarTranslucent
       >
-        <Pressable style={styles.backdrop} onPress={closeDialog}>
-          <Pressable
+        <Animated.View style={[styles.backdrop, { opacity: dialogOpacity }]}>
+          <Pressable style={StyleSheet.absoluteFillObject} onPress={closeDialog} />
+          <Animated.View
             style={[
               styles.card,
               {
                 backgroundColor: colors.surface,
                 borderColor: colors.border,
+                transform: [{ scale: dialogScale }],
               },
             ]}
-            onPress={(e) => e.stopPropagation()}
           >
+            <View style={[styles.accentBar, { backgroundColor: accent.border }]} />
             <View style={[styles.iconWrap, { backgroundColor: accent.bg }]}>
-              <Icon name={meta.icon} size={28} color={accent.text} />
+              <Icon name={meta.icon} size={30} color={accent.text} />
             </View>
             <Text style={[styles.title, { color: colors.text }]}>{dialog?.title}</Text>
             {dialog?.message ? (
@@ -149,7 +177,7 @@ export const AppAlertProvider = ({ children }) => {
                 {dialog.message}
               </Text>
             ) : null}
-            <View style={styles.actions}>
+            <View style={[styles.actions, buttonRow && styles.actionsRow]}>
               {dialog?.buttons?.map((btn, idx) => {
                 const isCancel = btn.style === "cancel";
                 const isDestructive = btn.style === "destructive";
@@ -158,6 +186,7 @@ export const AppAlertProvider = ({ children }) => {
                     key={`${btn.text}-${idx}`}
                     style={[
                       styles.actionBtn,
+                      buttonRow && styles.actionBtnHalf,
                       isCancel && {
                         backgroundColor: colors.surfaceAlt,
                         borderColor: colors.border,
@@ -191,8 +220,8 @@ export const AppAlertProvider = ({ children }) => {
                 );
               })}
             </View>
-          </Pressable>
-        </Pressable>
+          </Animated.View>
+        </Animated.View>
       </Modal>
 
       {toast ? (
@@ -201,13 +230,13 @@ export const AppAlertProvider = ({ children }) => {
           style={[
             styles.toastWrap,
             {
-              top: insets.top + (Platform.OS === "android" ? 8 : 4),
+              top: insets.top + (Platform.OS === "android" ? 10 : 6),
               opacity: toastOpacity,
               transform: [
                 {
                   translateY: toastOpacity.interpolate({
                     inputRange: [0, 1],
-                    outputRange: [-12, 0],
+                    outputRange: [-14, 0],
                   }),
                 },
               ],
@@ -220,20 +249,22 @@ export const AppAlertProvider = ({ children }) => {
             style={[
               styles.toast,
               {
-                backgroundColor: toastAccent.bg,
-                borderColor: colors.border,
+                backgroundColor: colors.surface,
+                borderColor: toastAccent.text + "44",
               },
             ]}
           >
-            <Icon
-              name={(VARIANT_META[toast.variant] || VARIANT_META.info).icon}
-              size={20}
-              color={toastAccent.text}
-            />
-            <Text style={[styles.toastText, { color: toastAccent.text }]}>
+            <View style={[styles.toastIcon, { backgroundColor: toastAccent.bg }]}>
+              <Icon
+                name={(VARIANT_META[toast.variant] || VARIANT_META.info).icon}
+                size={20}
+                color={toastAccent.text}
+              />
+            </View>
+            <Text style={[styles.toastText, { color: colors.text }]}>
               {toast.message}
             </Text>
-            <Icon name="close" size={18} color={toastAccent.text} />
+            <Icon name="close" size={18} color={colors.textMuted} />
           </TouchableOpacity>
         </Animated.View>
       ) : null}
@@ -252,54 +283,73 @@ export const useAppAlert = () => {
 const styles = StyleSheet.create({
   backdrop: {
     flex: 1,
-    backgroundColor: "rgba(15, 23, 42, 0.55)",
+    backgroundColor: "rgba(15, 23, 42, 0.62)",
     justifyContent: "center",
     alignItems: "center",
     padding: DS.spacing.lg,
   },
   card: {
     width: "100%",
-    maxWidth: 360,
-    borderRadius: DS.radius.xl,
+    maxWidth: 380,
+    borderRadius: 22,
     borderWidth: 1,
-    padding: DS.spacing.lg,
+    paddingHorizontal: DS.spacing.lg,
+    paddingBottom: DS.spacing.lg,
+    paddingTop: DS.spacing.md,
     alignItems: "center",
+    overflow: "hidden",
     ...DS.shadow.card,
   },
+  accentBar: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    height: 4,
+  },
   iconWrap: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
+    width: 60,
+    height: 60,
+    borderRadius: 30,
     alignItems: "center",
     justifyContent: "center",
+    marginTop: DS.spacing.sm,
     marginBottom: DS.spacing.md,
   },
   title: {
-    fontSize: DS.font.section,
+    fontSize: 19,
     fontWeight: "800",
     textAlign: "center",
     marginBottom: DS.spacing.sm,
+    letterSpacing: -0.2,
   },
   message: {
     fontSize: DS.font.body,
-    lineHeight: 22,
+    lineHeight: 23,
     textAlign: "center",
     marginBottom: DS.spacing.lg,
+    paddingHorizontal: 4,
   },
   actions: {
     width: "100%",
     gap: DS.spacing.sm,
   },
+  actionsRow: {
+    flexDirection: "row",
+  },
   actionBtn: {
-    minHeight: 46,
-    borderRadius: DS.radius.md,
+    minHeight: 48,
+    borderRadius: 14,
     borderWidth: 1,
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: DS.spacing.md,
   },
+  actionBtnHalf: {
+    flex: 1,
+  },
   actionText: {
-    fontSize: DS.font.label,
+    fontSize: 15,
     fontWeight: "700",
   },
   toastWrap: {
@@ -307,17 +357,24 @@ const styles = StyleSheet.create({
     left: DS.spacing.md,
     right: DS.spacing.md,
     zIndex: 9999,
-    elevation: 12,
+    elevation: 16,
   },
   toast: {
     flexDirection: "row",
     alignItems: "center",
     gap: 10,
-    borderRadius: DS.radius.lg,
+    borderRadius: 16,
     borderWidth: 1,
     paddingVertical: 12,
-    paddingHorizontal: 14,
+    paddingHorizontal: 12,
     ...DS.shadow.card,
+  },
+  toastIcon: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignItems: "center",
+    justifyContent: "center",
   },
   toastText: {
     flex: 1,

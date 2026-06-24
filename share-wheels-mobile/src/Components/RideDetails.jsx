@@ -39,6 +39,10 @@ import { formatDisplayTime } from "../Utils/dateUtils";
 import { LAYOUT } from "../theme/layout";
 import { profileData } from "../Navigation/AuthNavigator";
 import {
+  bookingHighlightLabel,
+  goToDashboardWithRideHighlight,
+} from "../Utils/navigateToDashboardHighlight";
+import {
   refUserId,
   getPassengerBookingBlockReason,
   getCourierBookingBlockReason,
@@ -51,7 +55,12 @@ const RideDetails = ({ navigation, route }) => {
   const contextSegment = route.params?.searchSegment;
   const { colors } = useTheme();
   const styles = useThemedStyles(createStyles);
-  const { ProfileDetails } = profileData();
+  const {
+    ProfileDetails,
+    setRefreshUpcomingrides,
+    setPendingHighlightRideId,
+    setPendingHighlightLabel,
+  } = profileData();
 
   const [rideInfo, setRideInfo] = useState(initialRide);
   const [detailsLoading, setDetailsLoading] = useState(false);
@@ -246,7 +255,14 @@ const RideDetails = ({ navigation, route }) => {
             {
               text: "OK",
               onPress: () =>
-                navigation.navigate("Navigator", { screen: "Home" }),
+                goToDashboardWithRideHighlight({
+                  navigation,
+                  rideId: ride._id,
+                  label: bookingHighlightLabel(response.bookingStatus),
+                  setRefreshUpcomingrides,
+                  setPendingHighlightRideId,
+                  setPendingHighlightLabel,
+                }),
             },
           ],
           { cancelable: false }
@@ -283,10 +299,9 @@ const RideDetails = ({ navigation, route }) => {
         !courierForm.amount_will ||
         !courierForm.receiver_name ||
         !courierForm.receiver_mobile ||
-        !courierForm.receiver_alternate_mobile ||
         !courierForm.receiver_address
       ) {
-        Alert.alert("Missing fields", "Please fill all courier fields.");
+        Alert.alert("Missing fields", "Please fill all required courier fields.");
         return;
       }
 
@@ -305,12 +320,14 @@ const RideDetails = ({ navigation, route }) => {
         courier_type: courierForm.courier_type,
         what_to_deliver: courierForm.what_to_deliver,
         courier_img: courierForm.courier_img,
-        amount_will: courierForm.amount_will,
+        amount_will: Number(courierForm.amount_will),
         date: now.toISOString(),
         timeSlot: now.toISOString(),
         receiver_name: courierForm.receiver_name,
         receiver_mobile: courierForm.receiver_mobile,
-        receiver_alternate_mobile: courierForm.receiver_alternate_mobile,
+        receiver_alternate_mobile:
+          courierForm.receiver_alternate_mobile?.trim() ||
+          courierForm.receiver_mobile,
         receiver_address: courierForm.receiver_address,
       };
 
@@ -330,7 +347,14 @@ const RideDetails = ({ navigation, route }) => {
             {
               text: "OK",
               onPress: () =>
-                navigation.navigate("Navigator", { screen: "Home" }),
+                goToDashboardWithRideHighlight({
+                  navigation,
+                  rideId: ride._id,
+                  label: bookingHighlightLabel(response.bookingStatus),
+                  setRefreshUpcomingrides,
+                  setPendingHighlightRideId,
+                  setPendingHighlightLabel,
+                }),
             },
           ],
           { cancelable: false }
@@ -655,8 +679,13 @@ const RideDetails = ({ navigation, route }) => {
         quickReserve={quickReserve}
         blockReason={passengerBlockReason}
         booking={bookingPassenger}
-        segment={bookingSegment}
+        segment={displayBookingSegment}
         hideSegmentPicker={hasContextSegment || showSegmentPicker}
+        perSeatFare={seatFare}
+        segmentKm={segmentKm}
+        fullRouteKm={fullRouteKm}
+        fareHint={segmentFareHint}
+        fareLoading={segmentFareLoading}
         onBook={handleBookPassenger}
       />
 

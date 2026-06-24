@@ -18,10 +18,10 @@ const subscriptionPlanSchema = new mongoose.Schema(
     currency: { type: String, default: "INR", trim: true },
     periodValue: { type: Number, min: 1 },
     periodUnit: { type: String, enum: PERIOD_UNITS },
-    /** Paid plans — max enroute picks per billing period */
+    /** Max enroute pickups per billing period. Used only when unlimitedPicks is false. */
     enroutePickLimit: { type: Number, min: 1 },
-    /** Free plan — how many rides can use unlimited enroute picking */
-    rideLimit: { type: Number, min: 1 },
+    /** When true, driver may pick unlimited enroute passengers/couriers until the plan expires. */
+    unlimitedPicks: { type: Boolean, default: false },
     isActive: { type: Boolean, default: true },
     isDefault: { type: Boolean, default: false },
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "Admin" },

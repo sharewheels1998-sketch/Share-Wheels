@@ -3,7 +3,7 @@
 ## End-to-end flow
 
 1. **Release APK** obtains FCM device token (`FCMService.getDeviceTokenWithPermission`).
-2. Token is saved via **`POST /auth/register-fcm-token`** on your API (`PRODUCTION_URL` from `.env.production`).
+2. Token is saved via **`POST /auth/register-fcm-token`** on your API (`PRODUCTION_URL` from `.env`).
 3. Backend stores `user.fcmToken` in MongoDB.
 4. On events, `notificationService.notifyUser` sends via **Firebase Admin** (`FIREBASE_SERVICE_ACCOUNT_JSON` on Render).
 
@@ -47,10 +47,10 @@ Optional: use [UptimeRobot](https://uptimerobot.com) to ping `https://your-app.o
 
 ## 3. Release build env
 
-Release APK reads **`.env.production`** (not `.env`):
+Release APK uses the same **`.env`** as debug. Set `PRODUCTION_URL` to your Render backend:
 
 ```env
-PRODUCTION_URL=https://new-sw-project.onrender.com
+PRODUCTION_URL=https://sharewheels-backend.onrender.com
 GOOGLE_MAPS_API_KEY=...
 ```
 

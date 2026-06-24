@@ -8,7 +8,7 @@ const { ensureParticipantBoardingOtp } = require("./rideVerificationService");
 const { notifyUser } = require("./notificationService");
 const { getRideDetails } = require("./rideService");
 const { toEnrouteDateKey } = require("../utils/rideDateQueryUtils");
-const { closeSiblingStandalonesAfterEnroutePick, closeOpenOppositeRoleStandalones } = require("../utils/participantRequestCleanup");
+const { closeSiblingStandalonesAfterEnroutePick, resolvePassengerLockedRideId, LOCKED_TO_OTHER_DRIVER_MESSAGE } = require("../utils/participantRequestCleanup");
 const {
   emitToUser,
   emitRideParticipantsUpdated,
@@ -36,8 +36,6 @@ const createPassengerRequest = async (user, { from, to, ride_need_date, seats_ne
   if (!startDateRaw) {
     return { status: 400, body: { error: "Start date is required" } };
   }
-
-  await closeOpenOppositeRoleStandalones(user._id, "passenger");
 
   const passengerRide = await PassengerRide.create({
     creator: user._id,
@@ -98,6 +96,9 @@ const getOpenRequests = async (user) => {
 
 const driverSubscriptionService = require("./driverSubscriptionService");
 
+const ENROUTE_REQUEST_UNAVAILABLE_MESSAGE =
+  "This request is no longer available. It may have already been picked by another driver.";
+
 const pickPassenger = async (user, { passenger_rideId, rideId }) => {
   if (!passenger_rideId || !rideId) {
     return { status: 400, body: { message: "passenger_rideId and rideId are required" } };
@@ -110,6 +111,46 @@ const pickPassenger = async (user, { passenger_rideId, rideId }) => {
   }
 
   return withRidePickLock(rideId, async () => {
+  const passengerRide = await PassengerRide.findById(passenger_rideId);
+  if (!passengerRide) {
+    return {
+      status: 404,
+      body: {
+        success: false,
+        message: ENROUTE_REQUEST_UNAVAILABLE_MESSAGE,
+        code: "ALREADY_PICKED",
+      },
+    };
+  }
+  if (passengerRide.creator.toString() === user._id.toString()) {
+    return { status: 400, body: { message: "You cannot pick your own request" } };
+  }
+  if (passengerRide.status === "expired") {
+    return { status: 400, body: { message: "This passenger request has expired" } };
+  }
+  if (passengerRide.status !== "pending") {
+    return {
+      status: 409,
+      body: {
+        success: false,
+        message: LOCKED_TO_OTHER_DRIVER_MESSAGE,
+        code: "ALREADY_PICKED",
+      },
+    };
+  }
+
+  const lockedRideId = resolvePassengerLockedRideId(passengerRide);
+  if (lockedRideId && lockedRideId !== String(rideId)) {
+    return {
+      status: 409,
+      body: {
+        success: false,
+        message: LOCKED_TO_OTHER_DRIVER_MESSAGE,
+        code: "ALREADY_PICKED",
+      },
+    };
+  }
+
   const entitlement = await driverSubscriptionService.assertCanPickEnroute(
     user._id,
     rideId
@@ -126,13 +167,6 @@ const pickPassenger = async (user, { passenger_rideId, rideId }) => {
     };
   }
 
-  const passengerRide = await PassengerRide.findById(passenger_rideId);
-  if (!passengerRide) return { status: 404, body: { message: "Passenger not found" } };
-  if (passengerRide.creator.toString() === user._id.toString()) return { status: 400, body: { message: "You cannot pick your own request" } };
-  if (passengerRide.status === "expired") {
-    return { status: 400, body: { message: "This passenger request has expired" } };
-  }
-  if (passengerRide.status !== "pending") return { status: 400, body: { message: "Passenger already picked" } };
   let ride = await Ride.findById(rideId);
   if (!ride) return { status: 404, body: { message: "Ride not found" } };
   if (ride.creator.toString() !== user._id.toString()) return { status: 403, body: { message: "Unauthorized" } };
@@ -169,15 +203,26 @@ const pickPassenger = async (user, { passenger_rideId, rideId }) => {
     { new: true }
   );
   if (!claimedPassengerRide) {
-    return { status: 400, body: { message: "Passenger already picked" } };
+    return {
+      status: 409,
+      body: {
+        success: false,
+        message: LOCKED_TO_OTHER_DRIVER_MESSAGE,
+        code: "ALREADY_PICKED",
+      },
+    };
   }
+
+  const perSeatOffer = Math.round(Number(claimedPassengerRide.amount_will) || 0);
+  const seatsNeeded = Math.max(1, Number(claimedPassengerRide.seats_needed) || 1);
+  const totalOffer = perSeatOffer * seatsNeeded;
 
   const passengerEntry = {
     userId: claimedPassengerRide.creator,
-    requires_seats: claimedPassengerRide.seats_needed,
+    requires_seats: seatsNeeded,
     from: claimedPassengerRide.from || ride.from,
     to: claimedPassengerRide.to || ride.to,
-    ride_amount: claimedPassengerRide.amount_will || 0,
+    ride_amount: totalOffer,
     status: "accepted",
     joinedAt: new Date(),
   };
@@ -262,8 +307,6 @@ const pickPassenger = async (user, { passenger_rideId, rideId }) => {
     action: "passenger_assigned",
     passengerRideId: claimedPassengerRide._id.toString(),
     rideId: ride._id.toString(),
-    from: ride.from,
-    to: ride.to,
   });
   emitEnrouteRequestRemoved(ride.from, ride.to, toEnrouteDateKey(ride.date), {
     passengerRideId: claimedPassengerRide._id.toString(),

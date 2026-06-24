@@ -31,7 +31,7 @@ const listFeedbackForAdmin = async (query = {}) => {
   const filter = {};
   if (query.status && query.status !== "all") filter.status = query.status;
   const feedbacks = await Feedback.find(filter)
-    .populate("userId", "name email mobile userNo")
+    .populate("userId", "name email mobile userNo profile_img")
     .sort({ createdAt: -1 })
     .limit(Math.min(Number(query.limit) || 100, 200))
     .lean();

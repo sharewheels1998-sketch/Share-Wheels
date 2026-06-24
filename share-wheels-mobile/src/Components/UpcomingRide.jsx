@@ -66,7 +66,7 @@ const MetaChip = ({ icon, label }) => {
   );
 };
 
-const UpcomingRide = ({ data, onPress }) => {
+const UpcomingRide = ({ data, onPress, highlighted = false, highlightLabel = "Your new ride" }) => {
   const { colors } = useTheme();
   const styles = useThemedStyles(createStyles);
   const { ProfileDetails } = profileData() || {};
@@ -86,6 +86,7 @@ const UpcomingRide = ({ data, onPress }) => {
     0;
   const price = getRideDisplayFare(data);
   const isPending = data?.bookingStatus === "pending_approval";
+  const isAwaitingDriver = isPending && role !== "driver";
 
   const profileUser = useMemo(() => {
     if (role === "driver") {
@@ -116,18 +117,32 @@ const UpcomingRide = ({ data, onPress }) => {
         ? "Start early"
         : data?.isSchedulePassed && data?.status === "pending" && role === "driver"
           ? "Ready"
-          : isPending
-            ? "Pending"
+          : isAwaitingDriver
+            ? "Awaiting driver"
             : null;
 
   const statusColors =
     data?.status === "started"
       ? { bg: colors.successBg, text: colors.successText }
-      : isPending
-        ? { bg: colors.warningBg, text: colors.warningText }
+      : isAwaitingDriver
+        ? { bg: colors.errorBg, text: colors.errorText }
         : data?.isSchedulePassed && role === "driver"
           ? { bg: colors.primaryMuted, text: colors.primaryText }
           : { bg: colors.surface, text: colors.textMuted };
+
+  const cardBorderColor = highlighted
+    ? colors.primary
+    : isAwaitingDriver
+      ? colors.errorText
+      : theme.border;
+  const accentColors = highlighted
+    ? [colors.primary, colors.primaryText]
+    : isAwaitingDriver
+      ? [colors.errorText, colors.errorBorder]
+      : theme.accent;
+  const cardBgColors = isAwaitingDriver
+    ? [colors.errorBg, colors.surface, theme.bg[theme.bg.length - 1]]
+    : theme.bg;
 
   const dateLabel = formatDisplayDate(data?.date, { showYear: false, weekday: false });
   const timeLabel = formatDisplayTime(data?.startTime);
@@ -136,20 +151,43 @@ const UpcomingRide = ({ data, onPress }) => {
     <TouchableOpacity
       activeOpacity={0.9}
       onPress={onPress}
-      style={[styles.cardOuter, { borderColor: theme.border }]}
+      style={[
+        styles.cardOuter,
+        { borderColor: cardBorderColor },
+        isAwaitingDriver && styles.cardOuterAwaiting,
+        highlighted && styles.cardOuterHighlighted,
+      ]}
     >
       <LinearGradient
-        colors={theme.bg}
+        colors={cardBgColors}
         start={{ x: 0, y: 0 }}
         end={{ x: 1, y: 1 }}
         style={styles.cardGradient}
       >
         <LinearGradient
-          colors={theme.accent}
+          colors={accentColors}
           start={{ x: 0, y: 0 }}
           end={{ x: 1, y: 0 }}
-          style={styles.topAccent}
+          style={[styles.topAccent, isAwaitingDriver && styles.topAccentAwaiting]}
         />
+
+        {highlighted ? (
+          <View style={[styles.newRideBanner, { backgroundColor: colors.primaryMuted }]}>
+            <Icon name="sparkles" size={14} color={colors.primaryText} />
+            <Text style={[styles.newRideBannerText, { color: colors.primaryText }]}>
+              {highlightLabel}
+            </Text>
+          </View>
+        ) : null}
+
+        {isAwaitingDriver ? (
+          <View style={[styles.awaitingBanner, { backgroundColor: colors.errorBg }]}>
+            <Icon name="hourglass-outline" size={14} color={colors.errorText} />
+            <Text style={[styles.awaitingBannerText, { color: colors.errorText }]}>
+              Awaiting driver approval
+            </Text>
+          </View>
+        ) : null}
 
         <View style={styles.cardInner}>
           <View style={styles.headerRow}>
@@ -170,14 +208,35 @@ const UpcomingRide = ({ data, onPress }) => {
                   </Text>
                 </View>
               </View>
-              <Text style={styles.profileSub} numberOfLines={1}>
+              <Text
+                style={[
+                  styles.profileSub,
+                  isAwaitingDriver && [
+                    styles.profileSubAwaiting,
+                    { color: colors.errorText },
+                  ],
+                ]}
+                numberOfLines={1}
+              >
                 {profileSubtitle}
               </Text>
             </View>
             <View style={styles.priceCol}>
               <Text style={[styles.priceValue, { color: theme.chipText }]}>₹{price}</Text>
               {statusLabel ? (
-                <View style={[styles.statusPill, { backgroundColor: statusColors.bg }]}>
+                <View
+                  style={[
+                    styles.statusPill,
+                    { backgroundColor: statusColors.bg },
+                    isAwaitingDriver && [
+                      styles.statusPillAwaiting,
+                      { borderColor: colors.errorBorder },
+                    ],
+                  ]}
+                >
+                  {isAwaitingDriver ? (
+                    <Icon name="time-outline" size={10} color={statusColors.text} />
+                  ) : null}
                   <Text style={[styles.statusText, { color: statusColors.text }]}>
                     {statusLabel}
                   </Text>
@@ -229,6 +288,20 @@ const createStyles = (c) =>
     shadowRadius: 6,
     elevation: 2,
   },
+  cardOuterAwaiting: {
+    borderWidth: 2,
+    shadowColor: c.errorText,
+    shadowOpacity: 0.14,
+    shadowRadius: 8,
+    elevation: 3,
+  },
+  cardOuterHighlighted: {
+    borderWidth: 2.5,
+    shadowColor: c.primary,
+    shadowOpacity: 0.22,
+    shadowRadius: 10,
+    elevation: 5,
+  },
   cardGradient: {
     borderRadius: LAYOUT.radius.md - 1,
     overflow: "hidden",
@@ -236,6 +309,39 @@ const createStyles = (c) =>
   topAccent: {
     height: 3,
     width: "100%",
+  },
+  topAccentAwaiting: {
+    height: 4,
+  },
+  awaitingBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: c.errorBorder,
+  },
+  awaitingBannerText: {
+    fontSize: 11,
+    fontWeight: "700",
+    letterSpacing: 0.2,
+  },
+  newRideBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    paddingVertical: 7,
+    paddingHorizontal: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: c.primary,
+  },
+  newRideBannerText: {
+    fontSize: 11,
+    fontWeight: "800",
+    letterSpacing: 0.3,
   },
   cardInner: {
     paddingHorizontal: 10,
@@ -269,6 +375,9 @@ const createStyles = (c) =>
     color: c.textMuted,
     marginTop: 1,
   },
+  profileSubAwaiting: {
+    fontWeight: "700",
+  },
   rolePill: {
     flexDirection: "row",
     alignItems: "center",
@@ -296,6 +405,14 @@ const createStyles = (c) =>
     paddingHorizontal: 6,
     paddingVertical: 2,
     borderRadius: 8,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 3,
+  },
+  statusPillAwaiting: {
+    borderWidth: 1,
+    paddingHorizontal: 7,
+    paddingVertical: 3,
   },
   statusText: {
     fontSize: 9,

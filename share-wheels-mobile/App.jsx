@@ -10,11 +10,13 @@ import {
 import { NavigationContainer } from "@react-navigation/native";
 
 import AuthNavigator from "./src/Navigation/AuthNavigator";
+import AppErrorBoundary from "./src/Components/AppErrorBoundary";
 import { AdsProvider } from "./src/context/AdsContext";
 import { ThemeProvider, useTheme } from "./src/context/ThemeContext";
 import { AppAlertProvider } from "./src/context/AppAlertContext";
 import {
   requestUserPermission,
+  hasNotificationPermission,
   registerForegroundHandler,
   registerNotificationOpenedApp,
   handleInitialNotification,
@@ -26,6 +28,7 @@ import { registerNotifeeForegroundPress } from "./src/Notifications/displayLocal
 import { handleNotificationOpen } from "./src/Notifications/notificationNavigation";
 import { consumePendingNotificationOpen } from "./src/Notifications/notifeeBackground";
 import { syncFcmTokenWithBackend } from "./src/Notifications/registerToken";
+import { showAppToast } from "./src/Utils/appAlert";
 import { SPLASH_LAUNCH_BACKGROUND } from "./src/theme/splashTiming";
 
 function AppShell() {
@@ -66,6 +69,8 @@ function AppShell() {
         const granted = await requestUserPermission();
         if (!granted) {
           console.warn("[FCM] notification permission denied");
+        } else {
+          syncFcmTokenWithBackend({ force: true }).catch(() => {});
         }
       } catch (err) {
         console.warn("[FCM] init:", err?.message || err);
@@ -73,6 +78,11 @@ function AppShell() {
 
       unsubForeground = registerForegroundHandler((remoteMessage) => {
         DeviceEventEmitter.emit(NOTIFICATIONS_REFRESH_EVENT);
+        const title =
+          remoteMessage?.notification?.title || remoteMessage?.data?.title;
+        if (title) {
+          showAppToast(title, "info", 4200);
+        }
         if (__DEV__) {
           console.log("[FCM] foreground:", remoteMessage?.notification?.title);
         }
@@ -96,7 +106,7 @@ function AppShell() {
         });
       });
 
-      const initial = await handleInitialNotification(onNotificationOpen);
+      const initial = await handleInitialNotification();
       if (initial) {
         setTimeout(() => onNotificationOpen(initial), 800);
       }
@@ -111,8 +121,12 @@ function AppShell() {
   }, [onNotificationOpen]);
 
   useEffect(() => {
-    const sub = AppState.addEventListener("change", (state) => {
+    const sub = AppState.addEventListener("change", async (state) => {
       if (state === "active") {
+        const permitted = await hasNotificationPermission();
+        if (!permitted) {
+          await requestUserPermission();
+        }
         syncFcmTokenWithBackend({ force: false }).catch(() => {});
       }
     });
@@ -158,14 +172,16 @@ function AppShell() {
 
 export default function App() {
   return (
-    <SafeAreaProvider
-      initialMetrics={initialWindowMetrics}
-      style={[styles.mainContainer, { backgroundColor: SPLASH_LAUNCH_BACKGROUND }]}
-    >
-      <ThemeProvider>
-        <AppShell />
-      </ThemeProvider>
-    </SafeAreaProvider>
+    <AppErrorBoundary>
+      <SafeAreaProvider
+        initialMetrics={initialWindowMetrics}
+        style={[styles.mainContainer, { backgroundColor: SPLASH_LAUNCH_BACKGROUND }]}
+      >
+        <ThemeProvider>
+          <AppShell />
+        </ThemeProvider>
+      </SafeAreaProvider>
+    </AppErrorBoundary>
   );
 }
 

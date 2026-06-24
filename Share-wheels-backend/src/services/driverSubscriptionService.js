@@ -1,8 +1,9 @@
 const mongoose = require("mongoose");
 const SubscriptionPlan = require("../models/subscriptionPlanModel");
 const UserSubscription = require("../models/userSubscriptionModel");
-
-const FREE_PLAN_YEARS = 10;
+const SubscriptionPaymentOrder = require("../models/subscriptionPaymentOrderModel");
+const User = require("../models/userModel");
+const razorpayService = require("./razorpayService");
 
 const addPeriod = (start, periodValue, periodUnit) => {
   const expiresAt = new Date(start);
@@ -14,76 +15,101 @@ const addPeriod = (start, periodValue, periodUnit) => {
   return expiresAt;
 };
 
-const farFutureExpiry = () => {
-  const d = new Date();
-  d.setFullYear(d.getFullYear() + FREE_PLAN_YEARS);
-  return d;
-};
-
-const normalizeRideId = (rideId) => rideId?.toString?.() || String(rideId || "");
-
-const buildPlanSnapshot = (plan) => ({
+const buildPlanSnapshot = (plan, { amountOverride } = {}) => ({
   name: plan.name,
   slug: plan.slug,
-  amount: plan.amount,
+  amount: plan.isFree ? 0 : Number(amountOverride ?? plan.amount ?? 0),
   currency: plan.currency,
   isFree: plan.isFree,
   enroutePickLimit: plan.enroutePickLimit,
-  rideLimit: plan.rideLimit,
+  unlimitedPicks: !!plan.unlimitedPicks,
   periodValue: plan.periodValue,
   periodUnit: plan.periodUnit,
   description: plan.description || "",
 });
 
+const userHasUsedFreePlan = async (userId) => {
+  const prior = await UserSubscription.findOne({
+    userId,
+    "planSnapshot.isFree": true,
+  }).select("_id");
+  return !!prior;
+};
+
 const formatSubscription = (subscription) => {
   if (!subscription) return null;
 
   const snapshot = subscription.planSnapshot || {};
-  const isFree = !!snapshot.isFree;
+  const lockedAmount = snapshot.isFree
+    ? 0
+    : Number(subscription.amountPaid ?? snapshot.amount ?? 0);
+  const plan = {
+    ...snapshot,
+    amount: lockedAmount,
+  };
   const now = new Date();
-  const usedRideIds = subscription.usedRideIds || [];
-
-  if (isFree) {
-    const rideLimit = snapshot.rideLimit ?? 0;
-    const ridesUsed = subscription.ridesUsed ?? usedRideIds.length;
-    const ridesRemaining = Math.max(0, rideLimit - ridesUsed);
-
-    return {
-      id: subscription._id,
-      status: subscription.status,
-      isFree: true,
-      unlimitedPicksPerRide: true,
-      rideLimit,
-      ridesUsed,
-      ridesRemaining,
-      startsAt: subscription.startsAt,
-      expiresAt: subscription.expiresAt,
-      isExpired: subscription.expiresAt <= now,
-      plan: snapshot,
-      planId: subscription.planId,
-      amountPaid: subscription.amountPaid,
-    };
-  }
-
+  const isTimeExpired =
+    subscription.expiresAt <= now || subscription.status === "expired";
+  const unlimited = !!snapshot.unlimitedPicks;
   const limit = snapshot.enroutePickLimit ?? 0;
   const used = subscription.picksUsed ?? 0;
-  const remaining = Math.max(0, limit - used);
+  const remaining = unlimited ? null : Math.max(0, limit - used);
+  const picksExhausted = !unlimited && used >= limit;
+  const isDeactivated =
+    subscription.status !== "active" || isTimeExpired || picksExhausted;
+  const isActive = !isDeactivated;
+
+  let deactivationReason = null;
+  if (isDeactivated) {
+    if (subscription.status === "cancelled") deactivationReason = "cancelled";
+    else if (isTimeExpired) deactivationReason = "expired";
+    else if (picksExhausted) deactivationReason = "picks_exhausted";
+    else deactivationReason = "inactive";
+  }
 
   return {
     id: subscription._id,
     status: subscription.status,
-    isFree: false,
-    unlimitedPicksPerRide: false,
+    isFree: !!snapshot.isFree,
+    unlimitedPicks: unlimited,
     picksUsed: used,
-    enroutePickLimit: limit,
+    enroutePickLimit: unlimited ? null : limit,
     picksRemaining: remaining,
+    picksExhausted,
     startsAt: subscription.startsAt,
     expiresAt: subscription.expiresAt,
-    isExpired: subscription.expiresAt <= now,
-    plan: snapshot,
+    isExpired: isTimeExpired,
+    isActive,
+    isDeactivated,
+    deactivationReason,
+    plan: plan,
     planId: subscription.planId,
-    amountPaid: subscription.amountPaid,
+    amountPaid: lockedAmount,
   };
+};
+
+const syncSubscriptionLifecycle = async (subscription) => {
+  if (!subscription?._id || subscription.status !== "active") {
+    return subscription;
+  }
+
+  const now = new Date();
+  const snapshot = subscription.planSnapshot || {};
+  const unlimited = !!snapshot.unlimitedPicks;
+  const limit = snapshot.enroutePickLimit ?? 0;
+  const used = subscription.picksUsed ?? 0;
+  const timeExpired = subscription.expiresAt <= now;
+  const picksExhausted = !unlimited && used >= limit;
+
+  if (!timeExpired && !picksExhausted) {
+    return subscription;
+  }
+
+  await UserSubscription.findByIdAndUpdate(subscription._id, {
+    $set: { status: "expired" },
+  });
+  subscription.status = "expired";
+  return subscription;
 };
 
 const expireStaleSubscriptions = async (userId) => {
@@ -96,6 +122,68 @@ const expireStaleSubscriptions = async (userId) => {
     },
     { $set: { status: "expired" } }
   );
+
+  const activeRows = await UserSubscription.find({
+    userId,
+    status: "active",
+    expiresAt: { $gt: now },
+  }).select("planSnapshot picksUsed");
+
+  for (const row of activeRows) {
+    const snapshot = row.planSnapshot || {};
+    if (snapshot.unlimitedPicks) continue;
+    const limit = snapshot.enroutePickLimit ?? 0;
+    const used = row.picksUsed ?? 0;
+    if (used >= limit) {
+      await UserSubscription.findByIdAndUpdate(row._id, {
+        $set: { status: "expired" },
+      });
+    }
+  }
+};
+
+const findUsableActiveSubscription = async (userId) => {
+  const now = new Date();
+  const candidate = await UserSubscription.findOne({
+    userId,
+    status: "active",
+    expiresAt: { $gt: now },
+  }).sort({ expiresAt: -1 });
+
+  if (!candidate) return null;
+
+  await syncSubscriptionLifecycle(candidate);
+  const refreshed = await UserSubscription.findById(candidate._id);
+  if (!refreshed || refreshed.status !== "active") return null;
+
+  const snapshot = refreshed.planSnapshot || {};
+  if (snapshot.unlimitedPicks) return refreshed;
+
+  const limit = snapshot.enroutePickLimit ?? 0;
+  const used = refreshed.picksUsed ?? 0;
+  if (used < limit) return refreshed;
+
+  await UserSubscription.findByIdAndUpdate(refreshed._id, {
+    $set: { status: "expired" },
+  });
+  return null;
+};
+
+const resolveDriverSubscription = async (userId, { autoProvisionFree = false } = {}) => {
+  await expireStaleSubscriptions(userId);
+
+  const usable = await findUsableActiveSubscription(userId);
+  if (usable) return usable;
+
+  const anyPrior = await UserSubscription.exists({ userId });
+  if (!anyPrior && autoProvisionFree) {
+    const defaultPlan = await getDefaultPlan();
+    if (defaultPlan) {
+      return createSubscriptionForPlan(userId, defaultPlan);
+    }
+  }
+
+  return getLatestSubscription(userId);
 };
 
 /** New drivers always start on the free plan — never a paid default. */
@@ -112,11 +200,15 @@ const getDefaultPlan = async () => {
   });
 };
 
-const createSubscriptionForPlan = async (userId, plan) => {
+const createSubscriptionForPlan = async (
+  userId,
+  plan,
+  { amountPaid, razorpayOrderId, razorpayPaymentId } = {}
+) => {
   const startsAt = new Date();
-  const expiresAt = plan.isFree
-    ? farFutureExpiry()
-    : addPeriod(startsAt, plan.periodValue, plan.periodUnit);
+  const expiresAt = addPeriod(startsAt, plan.periodValue, plan.periodUnit);
+
+  const paidAmount = plan.isFree ? 0 : Number(amountPaid ?? plan.amount ?? 0);
 
   await UserSubscription.updateMany(
     { userId, status: "active" },
@@ -126,39 +218,31 @@ const createSubscriptionForPlan = async (userId, plan) => {
   return UserSubscription.create({
     userId,
     planId: plan._id,
-    planSnapshot: buildPlanSnapshot(plan),
+    planSnapshot: buildPlanSnapshot(plan, { amountOverride: paidAmount }),
     status: "active",
     picksUsed: 0,
-    ridesUsed: 0,
-    usedRideIds: [],
     startsAt,
     expiresAt,
-    amountPaid: plan.amount || 0,
+    amountPaid: paidAmount,
+    razorpayOrderId: razorpayOrderId || undefined,
+    razorpayPaymentId: razorpayPaymentId || undefined,
   });
 };
 
-const ensureDefaultSubscription = async (userId) => {
-  await expireStaleSubscriptions(userId);
+const getLatestSubscription = async (userId) =>
+  UserSubscription.findOne({ userId }).sort({ createdAt: -1 });
 
-  const active = await UserSubscription.findOne({
-    userId,
-    status: "active",
-    expiresAt: { $gt: new Date() },
-  }).sort({ expiresAt: -1 });
-
-  if (active) return active;
-
-  const defaultPlan = await getDefaultPlan();
-  if (!defaultPlan) return null;
-
-  return createSubscriptionForPlan(userId, defaultPlan);
-};
+const ensureDefaultSubscription = async (userId) =>
+  resolveDriverSubscription(userId, { autoProvisionFree: true });
 
 const getDriverSubscriptionStatus = async (userId) => {
-  const subscription = await ensureDefaultSubscription(userId);
-  const plansRes = await SubscriptionPlan.find({ isActive: true })
-    .sort({ isFree: -1, amount: 1, createdAt: -1 })
-    .lean();
+  const [subscription, freePlanUsed, plansRes] = await Promise.all([
+    resolveDriverSubscription(userId, { autoProvisionFree: true }),
+    userHasUsedFreePlan(userId),
+    SubscriptionPlan.find({ isActive: true })
+      .sort({ isFree: -1, amount: 1, createdAt: -1 })
+      .lean(),
+  ]);
 
   return {
     status: 200,
@@ -166,9 +250,19 @@ const getDriverSubscriptionStatus = async (userId) => {
       success: true,
       subscription: formatSubscription(subscription),
       plans: plansRes,
+      freePlanUsed,
+      canSubscribeToFree: !freePlanUsed,
+      razorpayConfigured: razorpayService.isRazorpayConfigured(),
+      razorpayKeyId: razorpayService.getKeyId(),
     },
   };
 };
+
+/** Admin assigns a plan without Razorpay (complimentary / manual upgrade). */
+const adminAssignPlan = async (userId, plan) =>
+  createSubscriptionForPlan(userId, plan, {
+    amountPaid: plan.isFree ? 0 : plan.amount ?? 0,
+  });
 
 const subscribeToPlan = async (userId, planId) => {
   if (!mongoose.Types.ObjectId.isValid(planId)) {
@@ -180,22 +274,330 @@ const subscribeToPlan = async (userId, planId) => {
     return { status: 404, body: { success: false, message: "Plan not found or inactive" } };
   }
 
-  const subscription = await createSubscriptionForPlan(userId, plan);
+  if (plan.isFree) {
+    if (await userHasUsedFreePlan(userId)) {
+      return {
+        status: 403,
+        body: {
+          success: false,
+          message:
+            "The free plan can only be used once. Upgrade to a paid plan to continue picking en route.",
+          code: "FREE_PLAN_ALREADY_USED",
+        },
+      };
+    }
+
+    const subscription = await createSubscriptionForPlan(userId, plan);
+    return {
+      status: 200,
+      body: {
+        success: true,
+        message: "Free plan activated",
+        subscription: formatSubscription(subscription),
+      },
+    };
+  }
+
+  return {
+    status: 400,
+    body: {
+      success: false,
+      message: "Paid plans require payment. Use create-order and verify-payment endpoints.",
+      code: "PAYMENT_REQUIRED",
+    },
+  };
+};
+
+const createPaymentOrder = async (userId, planId) => {
+  if (!razorpayService.isRazorpayConfigured()) {
+    return {
+      status: 503,
+      body: {
+        success: false,
+        message: "Payment gateway is not configured. Contact support.",
+        code: "RAZORPAY_NOT_CONFIGURED",
+      },
+    };
+  }
+
+  if (!mongoose.Types.ObjectId.isValid(planId)) {
+    return { status: 400, body: { success: false, message: "Invalid plan ID" } };
+  }
+
+  const plan = await SubscriptionPlan.findOne({
+    _id: planId,
+    isActive: true,
+    isFree: false,
+  });
+  if (!plan) {
+    return {
+      status: 404,
+      body: { success: false, message: "Paid plan not found or inactive" },
+    };
+  }
+
+  if (!Number.isFinite(Number(plan.amount)) || Number(plan.amount) < 1) {
+    return {
+      status: 400,
+      body: {
+        success: false,
+        message: "Plan price must be at least ₹1 for online payment",
+        code: "INVALID_PLAN_AMOUNT",
+      },
+    };
+  }
+
+  await SubscriptionPaymentOrder.updateMany(
+    { userId, status: "created" },
+    { $set: { status: "expired" } }
+  );
+
+  const receipt = `sub_${userId.toString().slice(-6)}_${Date.now()}`.slice(0, 40);
+  let order;
+  let user;
+  try {
+    [order, user] = await Promise.all([
+      razorpayService.createOrder({
+        amount: plan.amount,
+        currency: plan.currency || "INR",
+        receipt,
+        notes: {
+          userId: userId.toString(),
+          planId: plan._id.toString(),
+          planName: plan.name,
+        },
+      }),
+      User.findById(userId).select("name email mobile").lean(),
+    ]);
+  } catch (err) {
+    return {
+      status: 502,
+      body: {
+        success: false,
+        message: err?.message || "Could not create Razorpay order. Try again.",
+        code: "RAZORPAY_ORDER_FAILED",
+      },
+    };
+  }
+
+  const expiresAt = new Date(Date.now() + 30 * 60 * 1000);
+
+  await SubscriptionPaymentOrder.create({
+    userId,
+    planId: plan._id,
+    razorpayOrderId: order.id,
+    amount: plan.amount,
+    currency: plan.currency || "INR",
+    status: "created",
+    expiresAt,
+  });
 
   return {
     status: 200,
     body: {
       success: true,
-      message: plan.isFree
-        ? "Free plan activated"
-        : "Subscription activated",
+      order: {
+        id: order.id,
+        amount: order.amount,
+        amountPaise: order.amount,
+        amountInr: plan.amount,
+        currency: order.currency,
+      },
+      keyId: razorpayService.getKeyId(),
+      plan: {
+        id: plan._id,
+        name: plan.name,
+        amount: plan.amount,
+        currency: plan.currency || "INR",
+      },
+      prefill: {
+        name: user?.name || "",
+        email: user?.email || "",
+        contact: user?.mobile || "",
+      },
+    },
+  };
+};
+
+const verifyPaymentAndSubscribe = async (userId, body = {}) => {
+  const {
+    planId,
+    razorpay_order_id: razorpayOrderId,
+    razorpay_payment_id: razorpayPaymentId,
+    razorpay_signature: razorpaySignature,
+  } = body;
+
+  const orderId = String(razorpayOrderId || "").trim();
+  const paymentId = String(razorpayPaymentId || "").trim();
+  const signature = String(razorpaySignature || "").trim();
+  const planIdStr = String(planId || "").trim();
+
+  if (!planIdStr || !orderId || !paymentId || !signature) {
+    return {
+      status: 400,
+      body: { success: false, message: "Missing payment verification fields" },
+    };
+  }
+
+  if (!mongoose.Types.ObjectId.isValid(planIdStr)) {
+    return { status: 400, body: { success: false, message: "Invalid plan ID" } };
+  }
+
+  const planObjectId = new mongoose.Types.ObjectId(planIdStr);
+
+  const existingSubscription = await UserSubscription.findOne({
+    userId,
+    razorpayOrderId: orderId,
+    razorpayPaymentId: paymentId,
+  }).sort({ createdAt: -1 });
+
+  if (existingSubscription) {
+    return {
+      status: 200,
+      body: {
+        success: true,
+        message: "Subscription already activated for this payment",
+        subscription: formatSubscription(existingSubscription),
+      },
+    };
+  }
+
+  let paymentOrder = await SubscriptionPaymentOrder.findOne({
+    userId,
+    razorpayOrderId: orderId,
+  });
+
+  if (!paymentOrder) {
+    return {
+      status: 404,
+      body: { success: false, message: "Payment order not found" },
+    };
+  }
+
+  if (String(paymentOrder.planId) !== planIdStr) {
+    return {
+      status: 400,
+      body: { success: false, message: "Plan does not match payment order" },
+    };
+  }
+
+  if (paymentOrder.status === "paid") {
+    const linkedSub = await UserSubscription.findOne({
+      userId,
+      razorpayOrderId: orderId,
+    }).sort({ createdAt: -1 });
+    if (linkedSub) {
+      return {
+        status: 200,
+        body: {
+          success: true,
+          message: "Subscription already activated",
+          subscription: formatSubscription(linkedSub),
+        },
+      };
+    }
+  }
+
+  if (paymentOrder.status !== "created") {
+    return {
+      status: 400,
+      body: {
+        success: false,
+        message: "Payment order is no longer valid. Create a new order.",
+        code: "ORDER_NOT_OPEN",
+      },
+    };
+  }
+
+  if (paymentOrder.expiresAt && paymentOrder.expiresAt <= new Date()) {
+    paymentOrder.status = "expired";
+    await paymentOrder.save();
+    return {
+      status: 400,
+      body: { success: false, message: "Payment order expired. Create a new order." },
+    };
+  }
+
+  const valid = razorpayService.verifyPaymentSignature({
+    razorpayOrderId: orderId,
+    razorpayPaymentId: paymentId,
+    razorpaySignature: signature,
+  });
+
+  if (!valid) {
+    paymentOrder.status = "failed";
+    await paymentOrder.save();
+    return {
+      status: 400,
+      body: { success: false, message: "Payment verification failed" },
+    };
+  }
+
+  const expectedAmountPaise = Math.round(Number(paymentOrder.amount) * 100);
+  try {
+    const paymentCheck = await razorpayService.validateCapturedPayment({
+      razorpayOrderId: orderId,
+      razorpayPaymentId: paymentId,
+      expectedAmountPaise,
+    });
+    if (!paymentCheck.ok) {
+      paymentOrder.status = "failed";
+      await paymentOrder.save();
+      return {
+        status: 400,
+        body: {
+          success: false,
+          message: "Payment could not be confirmed with Razorpay",
+          code: paymentCheck.reason,
+        },
+      };
+    }
+  } catch (err) {
+    console.warn("[subscription] Razorpay payment fetch failed:", err?.message || err);
+    return {
+      status: 502,
+      body: {
+        success: false,
+        message: "Could not confirm payment with Razorpay. Try again in a moment.",
+        code: "RAZORPAY_VERIFY_FAILED",
+      },
+    };
+  }
+
+  const plan = await SubscriptionPlan.findOne({
+    _id: planObjectId,
+    isActive: true,
+    isFree: false,
+  });
+  if (!plan) {
+    return { status: 404, body: { success: false, message: "Plan not found or inactive" } };
+  }
+
+  paymentOrder.status = "paid";
+  paymentOrder.razorpayPaymentId = paymentId;
+  paymentOrder.razorpaySignature = signature;
+  await paymentOrder.save();
+
+  const subscription = await createSubscriptionForPlan(userId, plan, {
+    amountPaid: paymentOrder.amount ?? plan.amount,
+    razorpayOrderId: orderId,
+    razorpayPaymentId: paymentId,
+  });
+
+  return {
+    status: 200,
+    body: {
+      success: true,
+      message: "Payment verified. Subscription activated.",
       subscription: formatSubscription(subscription),
     },
   };
 };
 
 const assertCanPickEnroute = async (userId, rideId) => {
-  const subscription = await ensureDefaultSubscription(userId);
+  const subscription = await resolveDriverSubscription(userId, {
+    autoProvisionFree: true,
+  });
 
   if (!subscription) {
     return {
@@ -207,64 +609,53 @@ const assertCanPickEnroute = async (userId, rideId) => {
     };
   }
 
-  const now = new Date();
-  if (subscription.expiresAt <= now) {
-    await UserSubscription.findByIdAndUpdate(subscription._id, {
-      status: "expired",
-    });
+  const formatted = formatSubscription(subscription);
+  if (!formatted?.isActive) {
+    const upgradeMsg = formatted?.isFree
+      ? "Your free plan is no longer active. Upgrade to a paid plan to continue."
+      : formatted?.deactivationReason === "picks_exhausted"
+        ? "Your plan pickups are used up. Renew or choose another plan."
+        : "Your subscription has expired. Renew or choose another plan.";
+
     return {
       ok: false,
       status: 403,
-      message: "Your subscription has expired. Renew to pick en route passengers.",
-      code: "SUBSCRIPTION_EXPIRED",
-      subscription: formatSubscription(subscription),
+      message: upgradeMsg,
+      code:
+        formatted?.deactivationReason === "picks_exhausted"
+          ? "PICK_LIMIT_REACHED"
+          : "SUBSCRIPTION_EXPIRED",
+      subscription: formatted,
     };
   }
 
   const snapshot = subscription.planSnapshot || {};
 
-  if (snapshot.isFree) {
-    const rideLimit = snapshot.rideLimit ?? 0;
-    const rideKey = normalizeRideId(rideId);
-    const usedRideIds = (subscription.usedRideIds || []).map(normalizeRideId);
-
-    if (rideKey && usedRideIds.includes(rideKey)) {
-      return {
-        ok: true,
-        subscription,
-        unlimitedPicksPerRide: true,
-      };
-    }
-
-    const ridesUsed = subscription.ridesUsed ?? usedRideIds.length;
-    if (ridesUsed >= rideLimit) {
-      return {
-        ok: false,
-        status: 403,
-        message: `You have used all ${rideLimit} free rides on your plan. Upgrade to pick on more rides.`,
-        code: "RIDE_LIMIT_REACHED",
-        subscription: formatSubscription(subscription),
-      };
-    }
-
-    return {
-      ok: true,
-      subscription,
-      unlimitedPicksPerRide: true,
-      ridesRemaining: rideLimit - ridesUsed,
-    };
+  if (snapshot.unlimitedPicks) {
+    return { ok: true, subscription, unlimitedPicks: true };
   }
 
   const limit = snapshot.enroutePickLimit ?? 0;
   const used = subscription.picksUsed ?? 0;
 
   if (used >= limit) {
+    await UserSubscription.findByIdAndUpdate(subscription._id, {
+      $set: { status: "expired" },
+    });
+    const upgradeMsg = snapshot.isFree
+      ? "Your free plan enroute pickups are used up. Upgrade to a paid plan to continue."
+      : `You have used all ${limit} enroute pickups on your current plan. Renew or choose another plan.`;
+
     return {
       ok: false,
       status: 403,
-      message: `You have used all ${limit} en route picks on your current plan. Upgrade or wait for renewal.`,
+      message: upgradeMsg,
       code: "PICK_LIMIT_REACHED",
-      subscription: formatSubscription(subscription),
+      subscription: formatSubscription({
+        ...subscription.toObject?.() || subscription,
+        status: "expired",
+        picksUsed: used,
+      }),
     };
   }
 
@@ -275,32 +666,32 @@ const assertCanPickEnroute = async (userId, rideId) => {
   };
 };
 
-const recordEnroutePick = async (userId, rideId) => {
-  const subscription = await ensureDefaultSubscription(userId);
+const recordEnroutePick = async (userId) => {
+  const subscription = await findUsableActiveSubscription(userId);
   if (!subscription) return;
 
   const snapshot = subscription.planSnapshot || {};
-  const rideKey = normalizeRideId(rideId);
+  if (snapshot.unlimitedPicks) return;
 
-  if (snapshot.isFree) {
-    if (!rideKey) return;
+  const updated = await UserSubscription.findOneAndUpdate(
+    {
+      _id: subscription._id,
+      status: "active",
+    },
+    { $inc: { picksUsed: 1 } },
+    { new: true }
+  );
+  if (!updated) return;
 
-    const usedRideIds = (subscription.usedRideIds || []).map(normalizeRideId);
-    if (usedRideIds.includes(rideKey)) return;
-
-    await UserSubscription.findByIdAndUpdate(subscription._id, {
-      $addToSet: { usedRideIds: rideKey },
-      $inc: { ridesUsed: 1 },
+  const limit = snapshot.enroutePickLimit ?? 0;
+  if ((updated.picksUsed ?? 0) >= limit) {
+    await UserSubscription.findByIdAndUpdate(updated._id, {
+      $set: { status: "expired" },
     });
-    return;
   }
-
-  await UserSubscription.findByIdAndUpdate(subscription._id, {
-    $inc: { picksUsed: 1 },
-  });
 };
 
-/** Driver IDs with a non-expired active subscription (paid or free). */
+/** Driver IDs with active subscription and remaining enroute picks (enroute pickup flows). */
 const getActiveSubscribedDriverIds = async (driverIds) => {
   const unique = [
     ...new Set(
@@ -317,48 +708,71 @@ const getActiveSubscribedDriverIds = async (driverIds) => {
     status: "active",
     expiresAt: { $gt: now },
   })
-    .select("userId")
+    .select("userId planSnapshot picksUsed")
     .lean();
 
-  return new Set(activeSubs.map((row) => String(row.userId)));
+  const eligible = new Set();
+  for (const row of activeSubs) {
+    const snapshot = row.planSnapshot || {};
+    if (snapshot.unlimitedPicks) {
+      eligible.add(String(row.userId));
+      continue;
+    }
+    const limit = snapshot.enroutePickLimit ?? 0;
+    const used = row.picksUsed ?? 0;
+    if (used < limit) {
+      eligible.add(String(row.userId));
+    }
+  }
+
+  return eligible;
 };
 
-/**
- * Drivers eligible for related-ride discovery: active paid/free subscription,
- * or auto-provisioned active free plan when the platform free plan is on.
- */
-const getEligibleRelatedRideDriverIds = async (driverIds) => {
-  const eligible = await getActiveSubscribedDriverIds(driverIds);
-  const unique = [
+const normalizeDriverIds = (driverIds) =>
+  [
     ...new Set(
       (driverIds || [])
         .map((id) => id?._id?.toString?.() || id?.toString?.() || String(id || ""))
         .filter((id) => mongoose.Types.ObjectId.isValid(id))
     ),
   ];
-  const missing = unique.filter((id) => !eligible.has(id));
-  if (!missing.length) return eligible;
 
-  const freePlan = await getDefaultPlan();
-  if (!freePlan?.isActive) return eligible;
+/**
+ * Drivers eligible for related-ride discovery (My Request matching rides).
+ * Includes paid and free subscriptions while status is active and before expiresAt.
+ * Does not require remaining enroute picks — only an active subscription window.
+ */
+const getEligibleRelatedRideDriverIds = async (driverIds) => {
+  const unique = normalizeDriverIds(driverIds);
+  if (!unique.length) return new Set();
 
-  await Promise.all(
-    missing.map(async (driverId) => {
-      try {
-        const subscription = await ensureDefaultSubscription(driverId);
-        const now = new Date();
-        if (
-          subscription &&
-          subscription.status === "active" &&
-          subscription.expiresAt > now
-        ) {
-          eligible.add(String(driverId));
-        }
-      } catch {
-        /* ignore per-driver provisioning errors */
-      }
-    })
+  const now = new Date();
+  const objectIds = unique.map((id) => new mongoose.Types.ObjectId(id));
+
+  await UserSubscription.updateMany(
+    {
+      userId: { $in: objectIds },
+      status: "active",
+      expiresAt: { $lte: now },
+    },
+    { $set: { status: "expired" } }
   );
+
+  const activeSubs = await UserSubscription.find({
+    userId: { $in: objectIds },
+    status: "active",
+    expiresAt: { $gt: now },
+  })
+    .select("userId planId")
+    .populate("planId", "isActive")
+    .lean();
+
+  const eligible = new Set();
+  for (const row of activeSubs) {
+    const planRef = row.planId;
+    if (planRef && planRef.isActive === false) continue;
+    eligible.add(String(row.userId));
+  }
 
   return eligible;
 };
@@ -374,6 +788,9 @@ const driverHasActiveSubscription = async (driverId) => {
 module.exports = {
   getDriverSubscriptionStatus,
   subscribeToPlan,
+  adminAssignPlan,
+  createPaymentOrder,
+  verifyPaymentAndSubscribe,
   assertCanPickEnroute,
   recordEnroutePick,
   ensureDefaultSubscription,
@@ -381,4 +798,5 @@ module.exports = {
   getActiveSubscribedDriverIds,
   getEligibleRelatedRideDriverIds,
   driverHasActiveSubscription,
+  userHasUsedFreePlan,
 };

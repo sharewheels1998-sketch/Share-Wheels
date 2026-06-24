@@ -15,6 +15,34 @@ export const isOpenCourierRequest = (item) => {
   return true;
 };
 
+export const REQUEST_LOCKED_TO_DRIVER_MESSAGE =
+  "This request is already picked by another driver.";
+
+/** Ride this My Request row is locked to (picked or pending with one driver). */
+export const getRequestLockedRideId = (item) => {
+  const raw = item?.raw || item || {};
+  const assigned =
+    raw.lockedRideId ||
+    raw.assignedRide ||
+    raw.assigned_to?.rideId ||
+    raw.driver_assigned_courier?.rideId ||
+    raw.linkedRide?._id;
+  if (assigned) return String(assigned);
+
+  const joins = raw.join_requested_By || raw.joinRequestedBy || [];
+  for (let i = joins.length - 1; i >= 0; i -= 1) {
+    const rideId = joins[i]?.rideId;
+    if (rideId) return String(rideId);
+  }
+  return null;
+};
+
+export const isRequestLockedToOtherDriver = (requestItem, rideId) => {
+  const lockedRideId = getRequestLockedRideId(requestItem);
+  if (!lockedRideId || rideId == null) return false;
+  return String(lockedRideId) !== String(rideId);
+};
+
 export const shouldRemoveMyRequestRow = (row, payload = {}) => {
   if (!row || !payload) return false;
 
@@ -33,30 +61,7 @@ export const shouldRemoveMyRequestRow = (row, payload = {}) => {
   ) {
     return true;
   }
-
-  const joinedActions = new Set([
-    "passenger_assigned",
-    "courier_assigned",
-    "ride_request_accepted",
-    "passenger_joined",
-    "courier_joined",
-    "passenger_request_sent",
-    "courier_request_sent",
-  ]);
-  if (!joinedActions.has(String(payload.action || ""))) return false;
-
-  const payloadFrom = String(payload.from || "").trim().toLowerCase();
-  const payloadTo = String(payload.to || "").trim().toLowerCase();
-  if (!payloadFrom || !payloadTo) return false;
-
-  const rowFrom = String(row.from || row.raw?.from || "").trim().toLowerCase();
-  const rowTo = String(row.to || row.raw?.to || "").trim().toLowerCase();
-  if (!rowFrom || !rowTo) return false;
-
-  const fromMatch =
-    rowFrom.includes(payloadFrom) || payloadFrom.includes(rowFrom);
-  const toMatch = rowTo.includes(payloadTo) || payloadTo.includes(rowTo);
-  return fromMatch && toMatch;
+  return false;
 };
 
 export const filterOpenPassengerRequests = (items = []) =>

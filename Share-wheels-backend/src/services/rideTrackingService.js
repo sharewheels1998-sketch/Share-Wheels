@@ -215,8 +215,8 @@ const ACTIVE_RIDE_SELECT =
 
 const getActiveRidesForAdmin = async () => {
   const rides = await Ride.find({ status: "started" })
-    .populate("creator", "name mobile")
-    .populate("passengers.userId", "name")
+    .populate("creator", "name mobile profile_img")
+    .populate("passengers.userId", "name profile_img")
     .select(ACTIVE_RIDE_SELECT)
     .lean();
 
@@ -227,8 +227,8 @@ const getActiveRidesForAdmin = async () => {
 const getActiveRideRowById = async (rideId) => {
   if (!mongoose.Types.ObjectId.isValid(rideId)) return null;
   const ride = await Ride.findById(rideId)
-    .populate("creator", "name mobile")
-    .populate("passengers.userId", "name")
+    .populate("creator", "name mobile profile_img")
+    .populate("passengers.userId", "name profile_img")
     .select(ACTIVE_RIDE_SELECT)
     .lean();
   return ride ? mapRideToActiveRow(ride) : null;
@@ -239,8 +239,8 @@ const getRideTracking = async (rideId) => {
     return { status: 400, body: { success: false, message: "Invalid ride ID" } };
   }
   const ride = await Ride.findById(rideId)
-    .populate("creator", "name mobile email")
-    .populate("passengers.userId", "name mobile")
+    .populate("creator", "name mobile email profile_img")
+    .populate("passengers.userId", "name mobile profile_img")
     .select(
       "from to status liveTracking passengers fromCoords toCoords routePolyline stopovers date startTime"
     )

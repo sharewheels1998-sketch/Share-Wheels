@@ -7,7 +7,11 @@ import {
   FlatList,
   KeyboardAvoidingView,
   Platform,
+  RefreshControl,
+  TouchableOpacity,
+  ActivityIndicator,
 } from "react-native";
+import Icon from "react-native-vector-icons/Ionicons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useFocusEffect, useNavigation } from "@react-navigation/native";
 
@@ -53,15 +57,38 @@ const sortUpcomingByPriority = (rides = []) =>
     return aTime - bTime;
   });
 
+const moveRideToFront = (rides = [], rideId) => {
+  if (!rideId) return rides;
+  const targetId = String(rideId);
+  const index = rides.findIndex(
+    (ride) => String(ride?._id || ride?.id) === targetId
+  );
+  if (index <= 0) return rides;
+  const ordered = [...rides];
+  const [match] = ordered.splice(index, 1);
+  return [match, ...ordered];
+};
+
 const DashboardPage = () => {
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const { colors } = useTheme();
   const styles = useThemedStyles(createStyles);
-  const { refreshUpcomingRides, ProfileDetails, setRefresh } = profileData();
+  const { refreshUpcomingRides, ProfileDetails, setRefresh, pendingHighlightRideId, setPendingHighlightRideId, pendingHighlightLabel, setPendingHighlightLabel } =
+    profileData();
+
+  const [highlightRideId, setHighlightRideId] = useState(null);
+  const [highlightLabel, setHighlightLabel] = useState(null);
+  const highlightRideIdRef = useRef(null);
+  const pendingHighlightRideIdRef = useRef(pendingHighlightRideId);
+  pendingHighlightRideIdRef.current = pendingHighlightRideId;
+  const pendingHighlightLabelRef = useRef(pendingHighlightLabel);
+  pendingHighlightLabelRef.current = pendingHighlightLabel;
 
   const [fromValue, setFromValue] = useState("");
   const [toValue, setToValue] = useState("");
+  const [fromSelected, setFromSelected] = useState(false);
+  const [toSelected, setToSelected] = useState(false);
   const [activeField, setActiveField] = useState(null);
   const [suggestions, setSuggestions] = useState([]);
   const [suggestionsLoading, setSuggestionsLoading] = useState(false);
@@ -73,6 +100,7 @@ const DashboardPage = () => {
   const [allRides, setAllRides] = useState([]);
   const [loadingAllRides, setLoadingAllRides] = useState(false);
   const [loadingUpcoming, setLoadingUpcoming] = useState(false);
+  const [refreshingUpcoming, setRefreshingUpcoming] = useState(false);
   const [showAllRides, setShowAllRides] = useState(false);
 
   const [errorMsg, setErrorMsg] = useState("");
@@ -94,9 +122,10 @@ const DashboardPage = () => {
   const { searchPlaces, resolvePlace, reload: reloadLocations } =
     useLocationSuggestions();
 
-  const fetchUpcomingRides = useCallback(async () => {
+  const fetchUpcomingRides = useCallback(async ({ isRefresh = false, highlightId } = {}) => {
     try {
-      setLoadingUpcoming(true);
+      if (isRefresh) setRefreshingUpcoming(true);
+      else setLoadingUpcoming(true);
       const token = await AsyncStorage.getItem("token");
       if (!token) return;
 
@@ -106,7 +135,9 @@ const DashboardPage = () => {
           ["pending", "started"].includes(ride?.status)
         )
       );
-      setRides(upcomingOnly);
+      const activeHighlightId =
+        highlightId || highlightRideIdRef.current || null;
+      setRides(moveRideToFront(upcomingOnly, activeHighlightId));
       setErrorMsg("");
     } catch (err) {
       console.log("Error fetching upcoming rides:", err.message);
@@ -114,16 +145,77 @@ const DashboardPage = () => {
       setRides([]);
     } finally {
       setLoadingUpcoming(false);
+      setRefreshingUpcoming(false);
     }
   }, []);
 
+  const onRefreshUpcoming = useCallback(() => {
+    fetchUpcomingRides({ isRefresh: true });
+    refreshAds();
+    reloadLocations(true);
+  }, [fetchUpcomingRides, refreshAds, reloadLocations]);
+
   useFocusEffect(
     useCallback(() => {
-      fetchUpcomingRides();
+      let nextHighlightId = null;
+      const pendingId = pendingHighlightRideIdRef.current;
+      const pendingLabel = pendingHighlightLabelRef.current;
+      if (pendingId) {
+        nextHighlightId = String(pendingId);
+        highlightRideIdRef.current = nextHighlightId;
+        setHighlightRideId(nextHighlightId);
+        setHighlightLabel(pendingLabel || "Your new ride");
+        setPendingHighlightRideId(null);
+        setPendingHighlightLabel(null);
+      }
+      fetchUpcomingRides({ highlightId: nextHighlightId });
       refreshAds();
       reloadLocations(true);
-    }, [fetchUpcomingRides, refreshUpcomingRides, refreshAds, reloadLocations])
+    }, [
+      fetchUpcomingRides,
+      refreshUpcomingRides,
+      refreshAds,
+      reloadLocations,
+      setPendingHighlightRideId,
+      setPendingHighlightLabel,
+    ])
   );
+
+  useEffect(() => {
+    if (!highlightRideId || loadingUpcoming || rides.length === 0) return undefined;
+
+    const index = rides.findIndex(
+      (ride) => String(ride?._id || ride?.id) === highlightRideId
+    );
+    if (index < 0) return undefined;
+
+    const scrollTimer = setTimeout(() => {
+      collapseFilters();
+      try {
+        listRef.current?.scrollToIndex({
+          index,
+          animated: true,
+          viewPosition: 0.15,
+        });
+      } catch {
+        listRef.current?.scrollToOffset({
+          offset: Math.max(0, upcomingSectionScrollOffsetRef.current),
+          animated: true,
+        });
+      }
+    }, 350);
+
+    const clearTimer = setTimeout(() => {
+      setHighlightRideId(null);
+      setHighlightLabel(null);
+      highlightRideIdRef.current = null;
+    }, 5000);
+
+    return () => {
+      clearTimeout(scrollTimer);
+      clearTimeout(clearTimer);
+    };
+  }, [highlightRideId, loadingUpcoming, rides]);
 
   useEffect(() => {
     const scrollToUpcoming = () =>
@@ -177,6 +269,11 @@ const DashboardPage = () => {
       return;
     }
 
+    if (!fromSelected || !toSelected) {
+      setErrorMsg("Please select From and To from the suggestions list");
+      return;
+    }
+
     try {
       setLoadingAllRides(true);
       setShowAllRides(true);
@@ -209,6 +306,8 @@ const DashboardPage = () => {
   const exitSearchResults = () => {
     setFromValue("");
     setToValue("");
+    setFromSelected(false);
+    setToSelected(false);
     setSuggestions([]);
     setShowAllRides(false);
     setAllRides([]);
@@ -256,10 +355,22 @@ const DashboardPage = () => {
     }).start(() => setShowFilters(false));
   };
 
-  const filterLocations = (text, field) => {
+  const filterLocations = (text, field, options = {}) => {
     expandFilters();
-    if (field === "FROM") setFromValue(text);
-    if (field === "TO") setToValue(text);
+    const selected = options.selected !== false;
+
+    if (field === "FROM") {
+      setFromValue(text);
+      setFromSelected(selected);
+      if (!selected) {
+        setToValue("");
+        setToSelected(false);
+      }
+    }
+    if (field === "TO") {
+      setToValue(text);
+      setToSelected(selected);
+    }
     setActiveField(field);
 
     const query = String(text || "").trim();
@@ -284,8 +395,14 @@ const DashboardPage = () => {
         : typeof item === "string"
           ? item
           : item?.label || "";
-    if (activeField === "FROM") setFromValue(label);
-    if (activeField === "TO") setToValue(label);
+    if (activeField === "FROM") {
+      setFromValue(label);
+      setFromSelected(true);
+    }
+    if (activeField === "TO") {
+      setToValue(label);
+      setToSelected(true);
+    }
     setSuggestions([]);
     setSuggestionsLoading(false);
   };
@@ -299,9 +416,15 @@ const DashboardPage = () => {
   const dropdownTop = activeField === "FROM" ? 70 : 142;
 
   const renderRide = ({ item, index }) => {
+    const isHighlighted =
+      !!highlightRideId &&
+      String(item?._id || item?.id) === highlightRideId;
+
     const card = (
       <UpcomingRide
         data={item}
+        highlighted={isHighlighted}
+        highlightLabel={isHighlighted ? highlightLabel : undefined}
         onPress={() => {
           dismissSuggestions();
           handleRidePress(item);
@@ -325,6 +448,8 @@ const DashboardPage = () => {
   const searchProps = {
     fromValue,
     toValue,
+    fromSelected,
+    toSelected,
     activeField,
     suggestions,
     suggestionsLoading,
@@ -363,6 +488,26 @@ const DashboardPage = () => {
     onDismissSuggestions: dismissSuggestions,
   };
 
+  const upcomingSectionTitle = (
+    <View style={styles.sectionRow}>
+      <Text style={styles.section}>Upcoming Rides</Text>
+      <TouchableOpacity
+        style={styles.refreshBtn}
+        onPress={onRefreshUpcoming}
+        disabled={refreshingUpcoming || loadingUpcoming}
+        accessibilityRole="button"
+        accessibilityLabel="Refresh upcoming rides"
+        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+      >
+        {refreshingUpcoming ? (
+          <ActivityIndicator size="small" color={colors.primary} />
+        ) : (
+          <Icon name="refresh" size={20} color={colors.primary} />
+        )}
+      </TouchableOpacity>
+    </View>
+  );
+
   const scrollListHeader = (
     <>
       <View
@@ -395,11 +540,11 @@ const DashboardPage = () => {
       >
         {rides.length === 0 ? (
           <CoachMarkAnchor id="home_upcoming" style={styles.upcomingAnchor}>
-            <Text style={styles.section}>Upcoming Rides</Text>
+            {upcomingSectionTitle}
             <Text style={styles.emptyRides}>No upcoming rides</Text>
           </CoachMarkAnchor>
         ) : (
-          <Text style={styles.section}>Upcoming Rides</Text>
+          upcomingSectionTitle
         )}
       </View>
       <AdPlacement placement="home_native" />
@@ -450,6 +595,14 @@ const DashboardPage = () => {
               renderItem={renderRide}
               ListHeaderComponent={scrollListHeader}
               ListEmptyComponent={null}
+              refreshControl={
+                <RefreshControl
+                  refreshing={refreshingUpcoming}
+                  onRefresh={onRefreshUpcoming}
+                  colors={[colors.primary]}
+                  tintColor={colors.primary}
+                />
+              }
               onScrollToIndexFailed={(info) => {
                 const average = info.averageItemLength || 220;
                 listRef.current?.scrollToOffset({
@@ -500,8 +653,24 @@ const createStyles = (c) =>
     section: {
       fontSize: LAYOUT.font.section,
       fontWeight: "700",
-      marginVertical: LAYOUT.spacing.md,
       color: c.text,
+      flex: 1,
+    },
+    sectionRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
+      marginVertical: LAYOUT.spacing.md,
+    },
+    refreshBtn: {
+      width: 36,
+      height: 36,
+      borderRadius: 18,
+      alignItems: "center",
+      justifyContent: "center",
+      backgroundColor: c.primaryMuted,
+      borderWidth: 1,
+      borderColor: c.border,
     },
     errorText: {
       color: c.errorText,

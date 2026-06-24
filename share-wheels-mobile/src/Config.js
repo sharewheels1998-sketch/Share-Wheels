@@ -5,7 +5,7 @@ import { DEV_API_URL } from "./devConfig";
 const trimUrl = (url) => (url ? String(url).trim().replace(/\/$/, "") : "");
 
 const PRODUCTION_URL =
-  trimUrl(Env.PRODUCTION_URL) || "https://new-sw-project.onrender.com";
+  trimUrl(Env.PRODUCTION_URL) || "https://sharewheels-backend.onrender.com";
 
 /** Android emulator → host machine. iOS simulator → localhost. */
 const getPlatformDefaultLocalUrl = () => {
@@ -100,6 +100,8 @@ export const endPoints = {
   getMyCourierRequestsurl: "/rides/my-courier-requests",
   deleteMyPassengerRequesturl: "/rides/my-passenger-requests",
   deleteMyCourierRequesturl: "/rides/my-courier-requests",
+  updateMyPassengerRequesturl: "/rides/my-passenger-requests",
+  updateMyCourierRequesturl: "/rides/my-courier-requests",
   uploadImageurl: "/auth/upload-image",
   AddVechileurl: "/auth/add-vehicle",
   editVechileurl: "/auth/edit-vehicle",
@@ -124,6 +126,9 @@ export const endPoints = {
   subscriptionPlansurl: "/subscriptions/plans",
   mySubscriptionurl: "/subscriptions/me",
   subscribePlanurl: "/subscriptions/subscribe",
+  subscriptionCreateOrderurl: "/subscriptions/create-order",
+  subscriptionVerifyPaymenturl: "/subscriptions/verify-payment",
   fareQuoteurl: "/fare/quote",
   fareRulesurl: "/fare/rules",
+  scanVehicleDocumenturl: "/auth/scan-vehicle-document",
 };

@@ -1,6 +1,19 @@
 import { useCallback, useEffect, useState } from "react";
 import { getActiveLookupTypes } from "../ApiService/lookupsApiService";
 
+export const ALLOWED_VEHICLE_TYPES = ["bike", "auto", "car"];
+
+/** Normalize stored/API vehicle type to bike, auto, or car. */
+export const normalizeVehicleType = (value) => {
+  const type = String(value || "")
+    .trim()
+    .toLowerCase();
+  if (ALLOWED_VEHICLE_TYPES.includes(type)) return type;
+  if (type === "scooter") return "bike";
+  if (["hatchback", "sedan", "suv", "muv", "van"].includes(type)) return "car";
+  return type;
+};
+
 export const LOOKUP_FALLBACKS = {
   courier_type: [
     { label: "Document", value: "document" },
@@ -8,12 +21,17 @@ export const LOOKUP_FALLBACKS = {
     { label: "Package", value: "package" },
   ],
   vehicle_type: [
-    { label: "Car", value: "car" },
-    { label: "SUV", value: "suv" },
-    { label: "Hatchback", value: "hatchback" },
     { label: "Bike", value: "bike" },
-    { label: "Van", value: "van" },
+    { label: "Auto", value: "auto" },
+    { label: "Car", value: "car" },
   ],
+};
+
+const filterVehicleTypeOptions = (options) => {
+  const allowed = new Set(ALLOWED_VEHICLE_TYPES);
+  return (options || []).filter((item) =>
+    allowed.has(String(item?.value || "").trim().toLowerCase())
+  );
 };
 
 const cache = {};
@@ -34,6 +52,11 @@ const normalizeOptions = (list, category) => {
       label: String(item?.label || value).trim() || value,
       value,
     });
+  }
+
+  if (category === "vehicle_type") {
+    const filtered = filterVehicleTypeOptions(merged);
+    return filtered.length > 0 ? filtered : LOOKUP_FALLBACKS.vehicle_type;
   }
 
   return merged.length > 0 ? merged : fallbacks;

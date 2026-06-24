@@ -2,10 +2,10 @@ apply plugin: "com.android.application"
 apply plugin: "org.jetbrains.kotlin.android"
 apply plugin: "com.facebook.react"
 
-// Release APK uses .env.production (production URL). Debug uses local .env.
+// Debug + release both use `.env` (release always uses PRODUCTION_URL — see Config.js).
 project.ext.envConfigFiles = [
     debug: ".env",
-    release: ".env.production",
+    release: ".env",
 ]
 apply from: project(':react-native-config').projectDir.getPath() + "/dotenv.gradle"
 
@@ -89,8 +89,8 @@ android {
         applicationId "com.sharewheels.app"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 4
-        versionName "3.1"
+        versionCode 6
+        versionName "4.2"
         manifestPlaceholders = [usesCleartextTraffic: "true"]
         resValue "string", "GOOGLE_MAPS_API_KEY", (project.env.get("GOOGLE_MAPS_API_KEY") ?: "")
     }
@@ -142,9 +142,11 @@ dependencies {
     implementation platform("com.google.firebase:firebase-bom:32.1.0")
     implementation "com.google.firebase:firebase-messaging"
     implementation "com.google.firebase:firebase-auth"
+    implementation "com.google.firebase:firebase-crashlytics"
 }
 
 apply plugin: "com.google.gms.google-services"
+apply plugin: "com.google.firebase.crashlytics"
 
 /** Warn when Firebase SHA fingerprints are not linked (causes FIS_AUTH_ERROR / no FCM token). */
 tasks.register("verifyFirebaseShaConfig") {

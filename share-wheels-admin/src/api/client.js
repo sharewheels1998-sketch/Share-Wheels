@@ -33,7 +33,11 @@ export const api = async (path, options = {}) => {
   }
 
   if (!res.ok) {
-    throw new Error(data.message || data.error || `Request failed (${res.status})`);
+    const fallback =
+      res.status === 500 && !data.message
+        ? "Server error — ensure Share Wheels backend is running on port 3001 (npm run dev in Share-wheels-backend)."
+        : `Request failed (${res.status})`;
+    throw new Error(data.message || data.error || fallback);
   }
 
   return data;
@@ -173,6 +177,22 @@ export const updateSubscriptionPlan = (id, body) =>
 export const deleteSubscriptionPlan = (id) =>
   api(`/admin/subscription-plans/${id}`, { method: "DELETE" });
 
+export const getSubscribedUsers = (params = {}) => {
+  const q = new URLSearchParams(params).toString();
+  return api(`/admin/subscriptions${q ? `?${q}` : ""}`);
+};
+
+export const assignUserSubscriptionPlan = (userId, planId) =>
+  api(`/admin/users/${userId}/subscription`, {
+    method: "POST",
+    body: JSON.stringify({ planId }),
+  });
+
+export const getSubscriptionPayments = (params = {}) => {
+  const q = new URLSearchParams(params).toString();
+  return api(`/admin/subscription-payments${q ? `?${q}` : ""}`);
+};
+
 export const getVehicleFares = (params = {}) => {
   const q = new URLSearchParams(params).toString();
   return api(`/admin/vehicle-fares${q ? `?${q}` : ""}`);
@@ -183,6 +203,16 @@ export const updateVehicleFare = (id, body) =>
   api(`/admin/vehicle-fares/${id}`, { method: "PATCH", body: JSON.stringify(body) });
 export const deleteVehicleFare = (id) =>
   api(`/admin/vehicle-fares/${id}`, { method: "DELETE" });
+
+export const getAdminMe = () => api("/admin/me");
+export const getAdminStaffMeta = () => api("/admin/staff/meta");
+export const getAdminStaff = () => api("/admin/staff");
+export const createAdminStaff = (body) =>
+  api("/admin/staff", { method: "POST", body: JSON.stringify(body) });
+export const updateAdminStaff = (id, body) =>
+  api(`/admin/staff/${id}`, { method: "PATCH", body: JSON.stringify(body) });
+export const deleteAdminStaff = (id) =>
+  api(`/admin/staff/${id}`, { method: "DELETE" });
 
 export const uploadAdMedia = async (file, mediaType = "image") => {
   const token = getToken();

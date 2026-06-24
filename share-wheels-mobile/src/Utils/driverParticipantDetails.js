@@ -1,5 +1,5 @@
 import { formatRequestDate, formatSingleDate } from "../Utils";
-import { getPassengerFare } from "./fareUtils";
+import { getPassengerFare, getCourierFare } from "./fareUtils";
 import { tripStatusLabel } from "./participantTripStatus";
 
 const fmtDate = (value) => {
@@ -96,7 +96,7 @@ export const buildDriverCourierDetail = (item, rideFrom, rideTo) => {
         value: item?.isBoardingVerified ? "Verified" : "Pending",
       },
     ],
-    price: item?.amount_will || 0,
+    price: getCourierFare(item),
     priceLabel: "Amount",
   };
 };
@@ -127,8 +127,6 @@ export const buildEnrouteDetail = (item, from, to, date) => {
         { label: "Courier Type", value: raw.courier_type },
         { label: "Sender Gender", value: raw.gender || item?.gender },
         { label: "Receiver Name", value: recv?.name },
-        { label: "Receiver Mobile", value: recv?.mobile },
-        { label: "Receiver Alt. Mobile", value: recv?.alternate_mobile },
         { label: "Receiver Address", value: recv?.Address || recv?.address },
         { label: "Request Type", value: raw.request_type },
         { label: "Status", value: raw.courier_status },

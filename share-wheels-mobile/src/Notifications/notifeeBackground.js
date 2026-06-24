@@ -4,17 +4,23 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 export const PENDING_NOTIFICATION_KEY = "PENDING_NOTIFICATION_OPEN";
 
 notifee.onBackgroundEvent(async ({ type, detail }) => {
-  if (type === EventType.PRESS && detail?.notification) {
-    await AsyncStorage.setItem(
-      PENDING_NOTIFICATION_KEY,
-      JSON.stringify({
-        data: detail.notification.data || {},
-        notification: {
-          title: detail.notification.title,
-          body: detail.notification.body,
-        },
-      })
-    );
+  try {
+    if (type === EventType.PRESS && detail?.notification) {
+      await AsyncStorage.setItem(
+        PENDING_NOTIFICATION_KEY,
+        JSON.stringify({
+          data: detail.notification.data || {},
+          notification: {
+            title: detail.notification.title,
+            body: detail.notification.body,
+          },
+        })
+      );
+    }
+  } catch (e) {
+    if (__DEV__) {
+      console.warn("[Notifee] background event:", e?.message || e);
+    }
   }
 });
 

@@ -8,7 +8,9 @@ import {
   ScrollView,
   Alert,
   DeviceEventEmitter,
+  RefreshControl,
 } from "react-native";
+import Icon from "react-native-vector-icons/Ionicons";
 
 import BottomSlider from "../Components/BottomSlider";
 import EnRoute, {
@@ -17,6 +19,7 @@ import EnRoute, {
 } from "../Components/EnRoute";
 import DriverEnrouteHub from "../Components/DriverEnrouteHub";
 import { useEnrouteRequests } from "../hooks/useEnrouteRequests";
+import { collectRideParticipantUserIds } from "../Utils/enrouteRequestUtils";
 import { getMySubscription } from "../ApiService/subscriptionApiService";
 import FixedButton from "../Components/FixedButton";
 import UpcomingRouteLines from "../Components/ui/UpcomingRouteLines";
@@ -157,13 +160,26 @@ const UpcomingDetailsPage = ({ route }) => {
   const [canCarryCourier, setCanCarryCourier] = useState(
     !!rideData?.CanCarryCourier
   );
-  const [quickReserve, setQuickReserve] = useState(!!rideData?.QuickReserve);
   const [courierRequests, setCourierRequests] = useState([]);
   const [passengerRequests, setPassengerRequests] = useState([]);
   const [rideStatus, setRideStatus] = useState(
     () => rideData?.status || rideData?.ride_status || "pending"
   );
   const [detailsLoading, setDetailsLoading] = useState(true);
+  const [refreshingPage, setRefreshingPage] = useState(false);
+  const [fareMeta, setFareMeta] = useState(() => ({
+    ride_amount:
+      rideData?.viewerDisplayFare ??
+      rideData?.displayFare ??
+      rideData?.ride_amount,
+    displayFare:
+      rideData?.viewerDisplayFare ??
+      rideData?.displayFare ??
+      rideData?.ride_amount,
+    viewerDisplayFare: rideData?.viewerDisplayFare,
+    perSeatFare: rideData?.perSeatFare,
+    fareSource: rideData?.fareSource,
+  }));
   const [driverToken, setDriverToken] = useState(null);
   const [verification, setVerification] = useState(null);
   const [myBoarding, setMyBoarding] = useState(null);
@@ -240,9 +256,6 @@ const UpcomingDetailsPage = ({ route }) => {
     if (data.CanCarryCourier != null) {
       setCanCarryCourier(!!data.CanCarryCourier);
     }
-    if (data.QuickReserve != null) {
-      setQuickReserve(!!data.QuickReserve);
-    }
     if (data.date != null || data.startTime != null) {
       setScheduleInfo((prev) => ({
         date: data.date ?? prev.date,
@@ -263,6 +276,22 @@ const UpcomingDetailsPage = ({ route }) => {
       setBookingMeta({
         from: data.bookedFrom,
         to: data.bookedTo,
+      });
+    }
+    if (
+      data.ride_amount != null ||
+      data.displayFare != null ||
+      data.viewerDisplayFare != null ||
+      data.perSeatFare != null
+    ) {
+      const viewerFare =
+        data.viewerDisplayFare ?? data.displayFare ?? data.ride_amount;
+      setFareMeta({
+        ride_amount: viewerFare,
+        displayFare: viewerFare,
+        viewerDisplayFare: data.viewerDisplayFare,
+        perSeatFare: data.viewerPerSeatFare ?? data.perSeatFare,
+        fareSource: data.fareSource,
       });
     }
   }, []);
@@ -299,6 +328,35 @@ const UpcomingDetailsPage = ({ route }) => {
     : rideData?.stopovers || [];
   const enrouteRoutePolyline =
     routeMeta.routePolyline || rideData?.routePolyline || "";
+
+  const rideParticipantUserIds = useMemo(
+    () =>
+      collectRideParticipantUserIds({
+        passengers,
+        couriers,
+        passengerRequests,
+        courierRequests,
+      }),
+    [passengers, couriers, passengerRequests, courierRequests]
+  );
+
+  const [pendingPickUserIds, setPendingPickUserIds] = useState(() => new Set());
+
+  useEffect(() => {
+    setPendingPickUserIds((prev) => {
+      if (!prev.size) return prev;
+      const next = new Set(
+        [...prev].filter((id) => !rideParticipantUserIds.has(id))
+      );
+      return next.size === prev.size ? prev : next;
+    });
+  }, [rideParticipantUserIds]);
+
+  const mergedParticipantUserIds = useMemo(() => {
+    const ids = new Set(rideParticipantUserIds);
+    pendingPickUserIds.forEach((id) => ids.add(id));
+    return ids;
+  }, [rideParticipantUserIds, pendingPickUserIds]);
 
   const upcomingRoutes = useMemo(() => {
     return getUpcomingRideRoutes(
@@ -343,7 +401,20 @@ const UpcomingDetailsPage = ({ route }) => {
   });
 
   useRideSocket(rideIdStr, {
-    onParticipantsUpdated: () => {
+    onParticipantsUpdated: (payload) => {
+      const action = String(payload?.action || "").toLowerCase();
+      const userId = String(payload?.userId || "");
+      if (
+        userId &&
+        (action === "passenger_removed" || action === "courier_removed")
+      ) {
+        setPendingPickUserIds((prev) => {
+          if (!prev.has(userId)) return prev;
+          const next = new Set(prev);
+          next.delete(userId);
+          return next;
+        });
+      }
       refreshRideDetailsQuiet();
       enrouteRequests.refresh();
     },
@@ -367,16 +438,38 @@ const UpcomingDetailsPage = ({ route }) => {
     }
   }, [isDriver]);
 
+  const handleRefreshPage = useCallback(async () => {
+    setRefreshingPage(true);
+    try {
+      await fetchRideDetails({ showLoading: false });
+      if (isDriver) {
+        await enrouteRequests.refresh();
+        await loadDriverSubscription();
+      }
+      refreshUpcomingList();
+    } finally {
+      if (isMountedRef.current) setRefreshingPage(false);
+    }
+  }, [
+    fetchRideDetails,
+    isDriver,
+    enrouteRequests.refresh,
+    loadDriverSubscription,
+    refreshUpcomingList,
+  ]);
+
   const handleEnroutePickSuccess = useCallback(
-    (_item, response, pickPayload) => {
-      if (pickPayload) {
+    async (_item, response, pickPayload) => {
+      if (pickPayload?.userId) {
+        const userId = String(pickPayload.userId);
+        setPendingPickUserIds((prev) => new Set([...prev, userId]));
         enrouteRequests.removePickedFromList(pickPayload);
       }
       if (response?.details) {
         applyRideDetails(response.details);
       }
-      fetchRideDetails();
-      enrouteRequests.refresh();
+      await fetchRideDetails({ showLoading: false });
+      await enrouteRequests.refresh();
       loadDriverSubscription();
       refreshUpcomingList();
     },
@@ -479,6 +572,19 @@ const UpcomingDetailsPage = ({ route }) => {
   const isRideStarted = normalizedRideStatus === "started";
   const effectiveRide = {
     ...rideData,
+    ...fareMeta,
+    myRole: role,
+    activeData: rideData?.activeData,
+    displayFare:
+      fareMeta.viewerDisplayFare ??
+      fareMeta.displayFare ??
+      fareMeta.ride_amount ??
+      rideData?.displayFare ??
+      rideData?.ride_amount,
+    ride_amount:
+      fareMeta.ride_amount ??
+      rideData?.ride_amount ??
+      rideData?.activeData?.ride_amount,
     date: scheduleInfo.date ?? rideData?.date,
     startTime: scheduleInfo.startTime ?? rideData?.startTime,
   };
@@ -489,16 +595,20 @@ const UpcomingDetailsPage = ({ route }) => {
     isDriver &&
     (normalizedRideStatus === "pending" || normalizedRideStatus === "started");
 
-  const participantTabs = useMemo(() => {
-    const tabs = ["All", "Passengers", "Couriers"];
-    if (!quickReserve) {
-      tabs.push("Pax requests", "Courier requests");
-    }
-    return tabs;
-  }, [quickReserve]);
+  const participantTabs = useMemo(
+    () => ["All", "Passengers", "Couriers"],
+    []
+  );
 
-  const pendingRequestCount =
-    passengerRequests.length + courierRequests.length;
+  const openParticipantsSlider = useCallback(
+    (tabIndex) => {
+      const resolved = typeof tabIndex === "number" ? tabIndex : 0;
+      const max = Math.max(0, participantTabs.length - 1);
+      setParticipantTabIndex(Math.min(Math.max(0, resolved), max));
+      setActiveSlider("participants");
+    },
+    [participantTabs.length]
+  );
 
   /** Courier role: only this user's parcel — not every delivery on the ride. */
   const myCourierParcels = useMemo(() => {
@@ -525,15 +635,6 @@ const UpcomingDetailsPage = ({ route }) => {
   const driverCanCompleteRide = useMemo(
     () => canDriverCompleteRide(driverRideForCompletion),
     [driverRideForCompletion]
-  );
-
-  const openParticipantsSlider = useCallback(
-    (tabIndex = 0) => {
-      const max = Math.max(0, participantTabs.length - 1);
-      setParticipantTabIndex(Math.min(Math.max(0, tabIndex), max));
-      setActiveSlider("participants");
-    },
-    [participantTabs.length]
   );
 
   useEffect(() => {
@@ -1180,7 +1281,24 @@ const UpcomingDetailsPage = ({ route }) => {
 
   return (
     <ScreenContainer style={{ paddingHorizontal: LAYOUT.spacing.screen }}>
-      <ScreenHeader title={detailsViewTitle} />
+      <ScreenHeader
+        title={detailsViewTitle}
+        rightElement={
+          <TouchableOpacity
+            onPress={handleRefreshPage}
+            disabled={refreshingPage}
+            accessibilityRole="button"
+            accessibilityLabel="Refresh ride details"
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            {refreshingPage ? (
+              <ActivityIndicator size="small" color={colors.primary} />
+            ) : (
+              <Icon name="refresh" size={22} color={colors.primary} />
+            )}
+          </TouchableOpacity>
+        }
+      />
 
       <View style={styles.buttonContainer}>
         <TouchableOpacity
@@ -1235,6 +1353,14 @@ const UpcomingDetailsPage = ({ route }) => {
 
       {/* 📜 SCROLLABLE CONTENT */}
       <ScrollView
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshingPage}
+            onRefresh={handleRefreshPage}
+            colors={[colors.primary]}
+            tintColor={colors.primary}
+          />
+        }
         contentContainerStyle={{
           padding: 2,
           paddingBottom: getScrollBottomPadding(
@@ -1368,14 +1494,10 @@ const UpcomingDetailsPage = ({ route }) => {
                     rideId={rideData?._id}
                     token={driverToken}
                     canCarryCourier={canCarryCourier}
-                    quickReserve={quickReserve}
                     disabled={!driverToken}
                     onUpdated={(opts) => {
                       if (opts.CanCarryCourier != null) {
                         setCanCarryCourier(!!opts.CanCarryCourier);
-                      }
-                      if (opts.QuickReserve != null) {
-                        setQuickReserve(!!opts.QuickReserve);
                       }
                     }}
                   />
@@ -1403,7 +1525,7 @@ const UpcomingDetailsPage = ({ route }) => {
               <Image source={priceIcon} style={styles.icon} />{" "}
               {isDriver ? "Price / Seat" : "Your Fare"}
             </Text>
-            <Text style={styles.value}>₹ {getRideDisplayFare(rideData)}</Text>
+            <Text style={styles.value}>₹ {getRideDisplayFare(effectiveRide)}</Text>
           </View>
 
           <View
@@ -1418,24 +1540,13 @@ const UpcomingDetailsPage = ({ route }) => {
           </View>
         </View>
 
-        {quickReserve && isDriver && canEditSeats ? (
-          <View style={styles.quickReserveBanner}>
-            <Text style={styles.quickReserveBannerText}>
-              Quick Reserve is ON — passengers & couriers join without your approval
-            </Text>
-          </View>
-        ) : null}
-
         {/* DRIVER VIEW — participants in popover */}
         {isDriver && (
           <>
             <DriverParticipantsHub
               passengerCount={passengers.length}
               courierCount={couriers.length}
-              pendingCount={pendingRequestCount}
-              quickReserve={quickReserve}
-              onOpen={() => openParticipantsSlider(0)}
-              onOpenPending={() => openParticipantsSlider(2)}
+              onOpen={() => openParticipantsSlider("default")}
             />
 
             <DriverEnrouteHub
@@ -1443,9 +1554,10 @@ const UpcomingDetailsPage = ({ route }) => {
               courierCount={enrouteRequests.counts.couriers}
               loading={enrouteRequests.loading}
               picksRemaining={driverSubscription?.picksRemaining}
-              ridesRemaining={driverSubscription?.ridesRemaining}
-              isFreePlan={driverSubscription?.isFree}
+              unlimitedPicks={driverSubscription?.unlimitedPicks}
               planName={driverSubscription?.plan?.name}
+              subscriptionActive={driverSubscription?.isActive !== false}
+              isDeactivated={!!driverSubscription?.isDeactivated}
               onOpen={() => {
                 enrouteRequests.refresh();
                 loadDriverSubscription();
@@ -1563,8 +1675,6 @@ const UpcomingDetailsPage = ({ route }) => {
                 onTabChange: setParticipantTabIndex,
                 passengers,
                 couriers,
-                passengerRequests,
-                courierRequests,
               })
             : activeSlider === "enroute"
               ? buildEnrouteDragHeader({
@@ -1586,8 +1696,6 @@ const UpcomingDetailsPage = ({ route }) => {
             detailsLoading={detailsLoading}
             passengers={passengers}
             couriers={couriers}
-            passengerRequests={passengerRequests}
-            courierRequests={courierRequests}
             rideFrom={rideData?.from}
             rideTo={rideData?.to}
             rideStatus={normalizedRideStatus}
@@ -1607,10 +1715,6 @@ const UpcomingDetailsPage = ({ route }) => {
               openParticipantDetails(item, "passenger")
             }
             onPressCourier={(item) => openParticipantDetails(item, "courier")}
-            onAcceptPassenger={handleAcceptPassenger}
-            onRejectPassenger={handleRejectPassenger}
-            onAcceptCourier={handleAcceptCourier}
-            onRejectCourier={handleRejectCourier}
           />
         )}
 
@@ -1680,6 +1784,7 @@ const UpcomingDetailsPage = ({ route }) => {
               routePolyline={enrouteRoutePolyline}
               onPickSuccess={handleEnroutePickSuccess}
               onSubscriptionRequired={handleSubscriptionRequired}
+              participantUserIds={mergedParticipantUserIds}
               data={enrouteRequests.data}
               loading={enrouteRequests.loading}
               onRefresh={enrouteRequests.refresh}
@@ -2144,20 +2249,6 @@ const createStyles = (c) => {
     marginBottom: 12,
     marginTop: 16,
     color: c.text,
-  },
-  quickReserveBanner: {
-    backgroundColor: c.successBg,
-    padding: 12,
-    borderRadius: 10,
-    marginBottom: 12,
-    borderWidth: 1,
-    borderColor: c.border,
-  },
-  quickReserveBannerText: {
-    color: c.successText,
-    fontSize: 13,
-    fontWeight: "600",
-    textAlign: "center",
   },
   sendRequestBtn: {
     backgroundColor: c.primaryMuted,

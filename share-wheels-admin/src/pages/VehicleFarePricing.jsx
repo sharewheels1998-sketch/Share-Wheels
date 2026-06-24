@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   getVehicleFares,
   createVehicleFare,
@@ -11,6 +11,7 @@ import Loading from "../components/ui/Loading";
 import AdminPageShell, { AdminTablePanel } from "../components/ui/AdminPageShell";
 import IconActionButton, { TableActions } from "../components/ui/IconActionButton";
 import { IconEdit, IconPause, IconPlay, IconTrash } from "../components/ui/icons";
+import PermissionGate from "../components/PermissionGate";
 import {
   Alert,
   btnClass,
@@ -18,10 +19,11 @@ import {
   inputClass,
   ModalBackdrop,
 } from "../components/ui/primitives";
+import { useDebouncedValue } from "../hooks/useDebouncedValue";
 
 const emptyTier = () => ({
   minKm: 0,
-  maxKm: "",
+  maxKm: 10,
   pricePerSeat: 10,
   pricingType: "per_km",
 });
@@ -35,12 +37,8 @@ const emptyForm = {
 
 const VEHICLE_ICONS = {
   bike: "🏍️",
-  scooter: "🛵",
-  car: "🚗",
-  suv: "🚙",
-  van: "🚐",
-  bus: "🚌",
   auto: "🛺",
+  car: "🚗",
 };
 
 const vehicleIcon = (type) => VEHICLE_ICONS[String(type || "").toLowerCase()] || "🚘";
@@ -54,7 +52,7 @@ const formatTierRange = (tier) => {
 
 const formatTierPrice = (tier) => {
   const rate = Number(tier.pricePerSeat) || 0;
-  return `₹${rate}/km`;
+  return tier.pricingType === "per_km" ? `₹${rate}/km` : `₹${rate}`;
 };
 
 const computePreviewFare = (tiers, distanceKm) => {
@@ -344,11 +342,13 @@ function TierEditorCard({
               </span>
               <input
                 type="number"
-                min="0.01"
-                step={isPerKm ? "0.1" : "1"}
+                min="1"
+                step="any"
+                inputMode="decimal"
                 className={`${inputClass} pl-8 font-semibold`}
-                value={tier.pricePerSeat}
+                value={tier.pricePerSeat === "" || tier.pricePerSeat == null ? "" : tier.pricePerSeat}
                 onChange={(e) => onChange("pricePerSeat", e.target.value)}
+                placeholder="e.g. 50"
                 required
               />
             </div>
@@ -373,6 +373,81 @@ function TierEditorCard({
   );
 }
 
+const VEHICLE_FARE_TYPES = ["bike", "auto", "car"];
+
+const canonicalFareType = (value) => {
+  const type = String(value || "").trim().toLowerCase();
+  if (VEHICLE_FARE_TYPES.includes(type)) return type;
+  if (type === "scooter") return "bike";
+  if (["hatchback", "sedan", "suv", "muv", "van"].includes(type)) return "car";
+  return type;
+};
+
+const serializeFormSnapshot = (form) =>
+  JSON.stringify({
+    vehicleType: form.vehicleType,
+    vehicleLabel: form.vehicleLabel,
+    isActive: form.isActive,
+    tiers: (form.tiers || []).map((t) => ({
+      minKm: t.minKm,
+      maxKm: t.maxKm ?? "",
+      pricePerSeat: t.pricePerSeat,
+      pricingType: t.pricingType === "per_km" ? "per_km" : "per_seat",
+    })),
+  });
+
+const buildFormPayload = (form) => {
+  if (!form.vehicleType) return { ok: false, skip: true };
+
+  try {
+    const tiers = (form.tiers || []).map((t) => {
+      const pricePerSeat = Number(t.pricePerSeat);
+      if (!Number.isFinite(pricePerSeat) || pricePerSeat <= 0) {
+        throw new Error("Each tier fare/rate must be a number greater than 0");
+      }
+      const minKm = Number(t.minKm);
+      if (!Number.isFinite(minKm) || minKm < 0) {
+        throw new Error("Each tier needs a valid from (km) value");
+      }
+      const maxRaw = t.maxKm;
+      const maxKm =
+        maxRaw === "" || maxRaw == null ? null : Number(maxRaw);
+      if (maxKm != null && (!Number.isFinite(maxKm) || maxKm < minKm)) {
+        throw new Error("Each tier to (km) must be empty or greater than from (km)");
+      }
+      return {
+        minKm,
+        maxKm,
+        pricePerSeat,
+        pricingType: t.pricingType === "per_km" ? "per_km" : "per_seat",
+      };
+    });
+
+    if (!tiers.length) return { ok: false, skip: true };
+
+    return {
+      ok: true,
+      payload: {
+        vehicleType: form.vehicleType,
+        vehicleLabel: form.vehicleLabel,
+        isActive: form.isActive,
+        tiers,
+      },
+    };
+  } catch (err) {
+    return { ok: false, skip: true, error: err.message };
+  }
+};
+
+/** When adding a tier, close the previous tier if it was open-ended ("If more"). */
+const closeOpenTierIfNeeded = (tier) => {
+  if (tier.maxKm != null && tier.maxKm !== "") {
+    return { tier, nextMin: Number(tier.maxKm) };
+  }
+  const nextMin = Number(tier.minKm || 0) + 10;
+  return { tier: { ...tier, maxKm: nextMin }, nextMin };
+};
+
 export default function VehicleFarePricing() {
   const [fares, setFares] = useState([]);
   const [vehicleTypes, setVehicleTypes] = useState([]);
@@ -381,25 +456,103 @@ export default function VehicleFarePricing() {
   const [modalOpen, setModalOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [autoSaveState, setAutoSaveState] = useState("idle");
   const [error, setError] = useState("");
+  const debouncedForm = useDebouncedValue(form, 900);
+  const lastSavedRef = useRef("");
+  const skipAutoSaveRef = useRef(false);
+  const savingRef = useRef(false);
 
-  const load = () => {
-    setLoading(true);
+  const load = (silent = false) => {
+    if (!silent) setLoading(true);
     getVehicleFares()
       .then((res) => setFares(res.fares || []))
       .catch((e) => setError(e.message))
-      .finally(() => setLoading(false));
+      .finally(() => {
+        if (!silent) setLoading(false);
+      });
   };
+
+  const persistForm = useCallback(async (formData, fareId) => {
+    const built = buildFormPayload(formData);
+    if (!built.ok) {
+      if (built.error) throw new Error(built.error);
+      throw new Error("Complete all required fields before saving");
+    }
+
+    if (fareId) {
+      const res = await updateVehicleFare(fareId, built.payload);
+      return { fareId, fare: res?.fare };
+    }
+
+    const res = await createVehicleFare(built.payload);
+    const id = res?.fare?._id;
+    if (!id) throw new Error("Could not create fare rules");
+    return { fareId: id, fare: res.fare };
+  }, []);
 
   useEffect(() => {
     load();
     getLookupTypes("vehicle_type")
-      .then((res) => setVehicleTypes(res.types || []))
+      .then((res) =>
+        setVehicleTypes(
+          (res.types || []).filter(
+            (t) =>
+              t.isActive !== false &&
+              VEHICLE_FARE_TYPES.includes(String(t.value || "").toLowerCase())
+          )
+        )
+      )
       .catch(() => {});
   }, []);
 
+  useEffect(() => {
+    if (!modalOpen) return;
+    if (skipAutoSaveRef.current) {
+      skipAutoSaveRef.current = false;
+      return;
+    }
+
+    const snapshot = serializeFormSnapshot(debouncedForm);
+    if (snapshot === lastSavedRef.current) return;
+
+    const built = buildFormPayload(debouncedForm);
+    if (!built.ok) {
+      setAutoSaveState("idle");
+      return;
+    }
+
+    let cancelled = false;
+
+    const runAutoSave = async () => {
+      if (savingRef.current) return;
+      savingRef.current = true;
+      setAutoSaveState("saving");
+      try {
+        const { fareId } = await persistForm(debouncedForm, editingId);
+        if (cancelled) return;
+        if (!editingId && fareId) setEditingId(fareId);
+        lastSavedRef.current = snapshot;
+        setAutoSaveState("saved");
+        setError("");
+        load(true);
+      } catch (err) {
+        if (cancelled) return;
+        setAutoSaveState("error");
+        setError(err.message || "Auto-save failed");
+      } finally {
+        savingRef.current = false;
+      }
+    };
+
+    runAutoSave();
+    return () => {
+      cancelled = true;
+    };
+  }, [debouncedForm, modalOpen, editingId, persistForm]);
+
   const configuredTypes = useMemo(
-    () => new Set(fares.map((f) => String(f.vehicleType || "").toLowerCase())),
+    () => new Set(fares.map((f) => canonicalFareType(f.vehicleType))),
     [fares]
   );
 
@@ -423,19 +576,23 @@ export default function VehicleFarePricing() {
   const openCreate = () => {
     setEditingId(null);
     const first = availableVehicleTypes[0];
-    setForm({
+    const initialForm = {
       ...emptyForm,
       vehicleType: first?.value || "",
       vehicleLabel: first?.label || "",
       tiers: [emptyTier()],
-    });
+    };
+    setForm(initialForm);
+    lastSavedRef.current = "";
+    skipAutoSaveRef.current = true;
+    setAutoSaveState("idle");
     setError("");
     setModalOpen(true);
   };
 
   const openEdit = (fare) => {
     setEditingId(fare._id);
-    setForm({
+    const initialForm = {
       vehicleType: fare.vehicleType || "",
       vehicleLabel: fare.vehicleLabel || fare.vehicleType || "",
       isActive: fare.isActive !== false,
@@ -445,7 +602,11 @@ export default function VehicleFarePricing() {
         pricePerSeat: t.pricePerSeat ?? 0,
         pricingType: t.pricingType === "per_km" ? "per_km" : "per_seat",
       })),
-    });
+    };
+    setForm(initialForm);
+    lastSavedRef.current = serializeFormSnapshot(initialForm);
+    skipAutoSaveRef.current = true;
+    setAutoSaveState("saved");
     setError("");
     setModalOpen(true);
   };
@@ -462,20 +623,19 @@ export default function VehicleFarePricing() {
 
   const addTier = () => {
     setForm((f) => {
-      const last = f.tiers[f.tiers.length - 1];
-      const nextMin =
-        last?.maxKm != null && last.maxKm !== ""
-          ? Number(last.maxKm)
-          : Number(last?.minKm || 0) + 10;
+      const tiers = [...f.tiers];
+      const { tier: closedLast, nextMin } = closeOpenTierIfNeeded(tiers[tiers.length - 1]);
+      tiers[tiers.length - 1] = closedLast;
+      const boundedMax = Number.isFinite(nextMin) ? nextMin + 10 : 20;
       return {
         ...f,
         tiers: [
-          ...f.tiers,
+          ...tiers,
           {
             minKm: Number.isFinite(nextMin) ? nextMin : 0,
-            maxKm: "",
-            pricePerSeat: last?.pricePerSeat ?? 8,
-            pricingType: last?.pricingType || "per_seat",
+            maxKm: boundedMax,
+            pricePerSeat: closedLast?.pricePerSeat ?? 8,
+            pricingType: closedLast?.pricingType || "per_seat",
           },
         ],
       };
@@ -484,15 +644,13 @@ export default function VehicleFarePricing() {
 
   const addIfMoreTier = () => {
     setForm((f) => {
-      const last = f.tiers[f.tiers.length - 1];
-      const nextMin =
-        last?.maxKm != null && last.maxKm !== ""
-          ? Number(last.maxKm)
-          : Number(last?.minKm || 0) + 10;
+      const tiers = [...f.tiers];
+      const { tier: closedLast, nextMin } = closeOpenTierIfNeeded(tiers[tiers.length - 1]);
+      tiers[tiers.length - 1] = closedLast;
       return {
         ...f,
         tiers: [
-          ...f.tiers,
+          ...tiers,
           {
             minKm: Number.isFinite(nextMin) ? nextMin : 10,
             maxKm: "",
@@ -541,31 +699,29 @@ export default function VehicleFarePricing() {
     setSaving(true);
     setError("");
     try {
-      const payload = {
-        vehicleType: form.vehicleType,
-        vehicleLabel: form.vehicleLabel,
-        isActive: form.isActive,
-        tiers: form.tiers.map((t) => ({
-          minKm: Number(t.minKm),
-          maxKm: t.maxKm === "" || t.maxKm == null ? null : Number(t.maxKm),
-          pricePerSeat: Number(t.pricePerSeat),
-          pricingType: t.pricingType === "per_km" ? "per_km" : "per_seat",
-        })),
-      };
-
-      if (editingId) {
-        await updateVehicleFare(editingId, payload);
-      } else {
-        await createVehicleFare(payload);
-      }
+      const snapshot = serializeFormSnapshot(form);
+      const { fareId } = await persistForm(form, editingId);
+      if (!editingId && fareId) setEditingId(fareId);
+      lastSavedRef.current = snapshot;
+      setAutoSaveState("saved");
       setModalOpen(false);
-      load();
+      load(true);
     } catch (err) {
       setError(err.message || "Could not save fare rules");
+      setAutoSaveState("error");
     } finally {
       setSaving(false);
     }
   };
+
+  const autoSaveLabel =
+    autoSaveState === "saving"
+      ? "Saving…"
+      : autoSaveState === "saved"
+        ? "All changes saved"
+        : autoSaveState === "error"
+          ? "Save failed"
+          : "Changes auto-save";
 
   const toggleActive = async (fare) => {
     try {
@@ -593,14 +749,16 @@ export default function VehicleFarePricing() {
         title="Vehicle fare pricing"
         subtitle="Distance-based ride fare per vehicle — flat or stacked per-km bands with an optional “if more” tier. Seats are set separately."
       >
-        <button
-          type="button"
-          className={btnClass("primary", "sm")}
-          onClick={openCreate}
-          disabled={!vehicleTypes.length}
-        >
-          + Add fares
-        </button>
+        <PermissionGate module="vehicle_fares" action="create">
+          <button
+            type="button"
+            className={btnClass("primary", "sm")}
+            onClick={openCreate}
+            disabled={!availableVehicleTypes.length}
+          >
+            + Add fares
+          </button>
+        </PermissionGate>
         <button type="button" className={btnClass("secondary", "sm")} onClick={load}>
           Refresh
         </button>
@@ -636,7 +794,7 @@ export default function VehicleFarePricing() {
               type="button"
               className={`${btnClass("primary")} mt-6`}
               onClick={openCreate}
-              disabled={!vehicleTypes.length}
+              disabled={!availableVehicleTypes.length}
             >
               Create first fare rule
             </button>
@@ -664,14 +822,16 @@ export default function VehicleFarePricing() {
                   </div>
                   <div className="flex shrink-0 flex-col items-end gap-2">
                     <StatusBadge active={fare.isActive !== false} />
-                    <button
-                      type="button"
-                      className={btnClass("primary", "sm")}
-                      onClick={() => openEdit(fare)}
-                    >
-                      <IconEdit className="h-3.5 w-3.5" />
-                      Edit
-                    </button>
+                    <PermissionGate module="vehicle_fares" action="edit">
+                      <button
+                        type="button"
+                        className={btnClass("primary", "sm")}
+                        onClick={() => openEdit(fare)}
+                      >
+                        <IconEdit className="h-3.5 w-3.5" />
+                        Edit
+                      </button>
+                    </PermissionGate>
                   </div>
                 </div>
 
@@ -683,26 +843,32 @@ export default function VehicleFarePricing() {
                 </div>
 
                 <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 bg-slate-50/50 px-4 py-3">
-                  <button
-                    type="button"
-                    className={btnClass("primary", "sm")}
-                    onClick={() => openEdit(fare)}
-                  >
-                    <IconEdit className="h-3.5 w-3.5" />
-                    Edit rules
-                  </button>
+                  <PermissionGate module="vehicle_fares" action="edit">
+                    <button
+                      type="button"
+                      className={btnClass("primary", "sm")}
+                      onClick={() => openEdit(fare)}
+                    >
+                      <IconEdit className="h-3.5 w-3.5" />
+                      Edit rules
+                    </button>
+                  </PermissionGate>
                   <TableActions>
-                    <IconActionButton
-                      label={fare.isActive ? "Pause" : "Activate"}
-                      onClick={() => toggleActive(fare)}
-                      icon={fare.isActive ? IconPause : IconPlay}
-                    />
-                    <IconActionButton
-                      label="Delete"
-                      onClick={() => handleDelete(fare)}
-                      icon={IconTrash}
-                      variant="danger"
-                    />
+                    <PermissionGate module="vehicle_fares" action="edit">
+                      <IconActionButton
+                        label={fare.isActive ? "Pause" : "Activate"}
+                        onClick={() => toggleActive(fare)}
+                        icon={fare.isActive ? IconPause : IconPlay}
+                      />
+                    </PermissionGate>
+                    <PermissionGate module="vehicle_fares" action="delete">
+                      <IconActionButton
+                        label="Delete"
+                        onClick={() => handleDelete(fare)}
+                        icon={IconTrash}
+                        variant="danger"
+                      />
+                    </PermissionGate>
                   </TableActions>
                 </div>
               </article>
@@ -722,6 +888,13 @@ export default function VehicleFarePricing() {
                 {editingId
                   ? `Updating ${form.vehicleLabel || form.vehicleType}`
                   : "Choose a vehicle and define distance bands"}
+              </p>
+              <p
+                className={`mt-2 text-xs font-medium ${
+                  autoSaveState === "error" ? "text-amber-200" : "text-white/70"
+                }`}
+              >
+                {autoSaveLabel}
               </p>
             </div>
 
@@ -833,7 +1006,7 @@ export default function VehicleFarePricing() {
                 Cancel
               </button>
               <button type="submit" className={btnClass("primary")} disabled={saving}>
-                {saving ? "Saving…" : editingId ? "Save changes" : "Create rules"}
+                {saving ? "Saving…" : "Done"}
               </button>
             </div>
           </form>

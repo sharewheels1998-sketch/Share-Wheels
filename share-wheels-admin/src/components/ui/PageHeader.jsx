@@ -14,15 +14,15 @@ export default function PageHeader({ title, subtitle, children, compact = false,
           <h2
             className={
               compact
-                ? "text-lg font-extrabold tracking-tight text-slate-900 lg:text-xl"
-                : "text-2xl font-extrabold tracking-tight text-slate-900 lg:text-3xl"
+                ? "text-lg font-extrabold tracking-tight text-slate-900 lg:text-xl dark:text-slate-100"
+                : "text-2xl font-extrabold tracking-tight text-slate-900 lg:text-3xl dark:text-slate-100"
             }
           >
             {title}
           </h2>
           {subtitle ? (
             <p
-              className={`mt-1 max-w-2xl text-slate-500 ${compact ? "line-clamp-1 text-xs lg:text-sm" : "text-sm leading-relaxed lg:text-[15px]"}`}
+              className={`mt-1 max-w-2xl text-slate-500 dark:text-slate-400 ${compact ? "line-clamp-1 text-xs lg:text-sm" : "text-sm leading-relaxed lg:text-[15px]"}`}
             >
               {subtitle}
             </p>

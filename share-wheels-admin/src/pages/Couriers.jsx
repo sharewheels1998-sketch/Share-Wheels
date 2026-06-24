@@ -9,6 +9,7 @@ import AdminPageShell, { AdminTablePanel } from "../components/ui/AdminPageShell
 import Pagination from "../components/ui/Pagination";
 import { usePagination } from "../hooks/usePagination";
 import { btnClass, inputClass, Table, Th, Td } from "../components/ui/primitives";
+import UserTableCell from "../components/ui/UserTableCell";
 
 export default function Couriers() {
   const [rows, setRows] = useState([]);
@@ -78,7 +79,12 @@ export default function Couriers() {
                 ) : (
                   paginatedItems.map((r) => (
                     <tr key={r._id} className="hover:bg-slate-50/80">
-                      <Td className="font-medium">{r.creator?.name || "—"}</Td>
+                      <Td>
+                        <UserTableCell
+                          user={r.creator}
+                          subtitle={r.creator?.mobile || r.creator?.email || undefined}
+                        />
+                      </Td>
                       <Td><span className="font-medium">{r.from}</span> → {r.to}</Td>
                       <Td>{r.what_to_deliver || "—"}</Td>
                       <Td>₹{r.amount_will ?? 0}</Td>
